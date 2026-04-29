@@ -1,0 +1,20 @@
+[Unit]
+Description=Ops Engine SMW droplet agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/usr/local/ops-engine-agent
+ExecStart=/usr/local/ops-engine-agent/.venv/bin/python /usr/local/ops-engine-agent/agent.py
+User=ishan
+Group=ishan
+Nice=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/usr/local/ops-engine-agent
+
+[Install]
+WantedBy=multi-user.target
