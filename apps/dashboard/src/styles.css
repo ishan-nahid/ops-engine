@@ -1,0 +1,52 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #eef2f7;
+  color: #0f172a;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at top left, #dbeafe 0, transparent 32rem), #eef2f7; }
+main { max-width: 1240px; margin: 0 auto; padding: 32px 20px 64px; }
+.hero { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 24px; padding: 28px; border: 1px solid rgba(148, 163, 184, 0.35); border-radius: 28px; background: rgba(255, 255, 255, 0.8); box-shadow: 0 24px 80px rgba(15, 23, 42, 0.12); backdrop-filter: blur(18px); }
+h1 { margin: 0; font-size: clamp(34px, 5vw, 56px); letter-spacing: -0.05em; }
+h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+p { margin: 0; }
+.subtitle { max-width: 760px; color: #475569; line-height: 1.7; margin-top: 12px; }
+.eyebrow { text-transform: uppercase; letter-spacing: 0.12em; color: #2563eb; font-size: 12px; font-weight: 800; margin-bottom: 8px; }
+.refresh { border: 0; border-radius: 999px; padding: 12px 16px; display: inline-flex; gap: 8px; align-items: center; background: #0f172a; color: white; cursor: pointer; font-weight: 800; }
+.refresh:disabled { opacity: 0.65; cursor: wait; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.grid { display: grid; gap: 16px; }
+.metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 16px; }
+.metric { min-height: 150px; border: 1px solid rgba(148, 163, 184, 0.35); border-radius: 24px; padding: 18px; background: rgba(255, 255, 255, 0.82); box-shadow: 0 14px 45px rgba(15, 23, 42, 0.08); display: flex; flex-direction: column; justify-content: space-between; }
+.metricIcon { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: #eff6ff; color: #2563eb; }
+.metric p { color: #64748b; font-size: 13px; margin-top: 12px; }
+.metric strong { display: block; margin-top: 4px; font-size: 24px; letter-spacing: -0.03em; }
+.metric span { display: block; margin-top: 6px; color: #64748b; font-size: 12px; line-height: 1.5; }
+.metric.good .metricIcon, .pill.good, .dot.good { background: #dcfce7; color: #166534; }
+.metric.warn .metricIcon, .pill.warn { background: #fef3c7; color: #92400e; }
+.metric.bad .metricIcon, .pill.bad, .dot.bad { background: #fee2e2; color: #991b1b; }
+.metric.unknown .metricIcon, .pill.unknown { background: #e2e8f0; color: #475569; }
+.banner { margin: 0 0 16px; padding: 14px 16px; border-radius: 18px; display: flex; gap: 10px; align-items: center; font-weight: 700; }
+.banner.bad { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.panel { border: 1px solid rgba(148, 163, 184, 0.35); border-radius: 28px; background: rgba(255, 255, 255, 0.9); box-shadow: 0 16px 50px rgba(15, 23, 42, 0.08); padding: 22px; margin-top: 16px; }
+.panelHeader { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
+.muted { color: #64748b; }
+.tableWrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 13px 12px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+th { color: #475569; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+code { color: #334155; white-space: nowrap; font-size: 12px; }
+.pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 10px; font-weight: 800; font-size: 12px; background: #e2e8f0; color: #475569; }
+.twoCol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.stack { display: grid; gap: 12px; }
+.incident, .uptime { border: 1px solid #e2e8f0; border-radius: 18px; padding: 14px; background: #f8fafc; }
+.incident strong { display: block; margin-top: 10px; }
+.incident p, .uptime p { margin-top: 6px; color: #64748b; line-height: 1.5; }
+.incident small, .uptime small { display: block; margin-top: 6px; color: #64748b; }
+.uptime { display: flex; gap: 12px; align-items: flex-start; }
+.dot { flex: 0 0 auto; margin-top: 6px; width: 12px; height: 12px; border-radius: 999px; background: #e2e8f0; }
+@media (max-width: 1100px) { .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) { main { padding: 18px 12px 48px; } .hero { flex-direction: column; padding: 20px; border-radius: 22px; } .metrics, .twoCol { grid-template-columns: 1fr; } }
