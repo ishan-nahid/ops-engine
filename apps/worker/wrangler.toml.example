@@ -1,0 +1,21 @@
+name = "ops-engine-api"
+main = "src/index.ts"
+compatibility_date = "2026-04-30"
+
+# Copy this file to wrangler.toml after you create the D1 database.
+# Never commit real secrets.
+
+[vars]
+APP_NAME = "Ops Engine"
+PUBLIC_DASHBOARD_ORIGIN = "https://ops.sunnysir.com"
+SMW_PUBLIC_URL = "https://sunnysir.com"
+SMW_HEALTH_SUMMARY_URL = "https://sunnysir.com/api/internal/health-summary/"
+ALERT_WEBHOOK_URL = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ops-engine"
+database_id = "replace-with-cloudflare-d1-id"
+
+[triggers]
+crons = ["*/5 * * * *", "*/15 * * * *"]
