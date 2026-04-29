@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+wrangler.toml
+.dev.vars
+
+# Build output
+dist/
+build/
+.wrangler/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
