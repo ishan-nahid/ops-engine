@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Ops Engine droplet agent.
 
-Collects local service/resource health on the SMW droplet and pushes it to the
-external Ops Engine Worker. This script opens no public port.
+Collects local service/resource/business/DevOps health on the SMW droplet and
+pushes it to the external Ops Engine Worker. This script opens no public port.
 
 Privacy note: API traffic collection is aggregate by default. Optional request
 events are expected to already be sanitized by SMW: hashed IP/user, no bodies,
@@ -130,7 +130,7 @@ def collect_smw_health() -> dict[str, Any]:
     url = env("SMW_HEALTH_SUMMARY_URL")
     if not url:
         return {"status": "unknown", "error": "SMW_HEALTH_SUMMARY_URL not configured"}
-    headers = {"user-agent": "ops-engine-agent/0.3.1"}
+    headers = {"user-agent": "ops-engine-agent/0.5.0"}
     token = env("SMW_HEALTH_SUMMARY_TOKEN")
     if token:
         headers["authorization"] = f"Bearer {token}"
@@ -146,6 +146,21 @@ def collect_smw_health() -> dict[str, Any]:
         return {"status": "ok" if response.ok else "down", "ok": response.ok, "status_code": response.status_code, "latency_ms": latency_ms, "data": data}
     except Exception as exc:
         return {"status": "down", "ok": False, "error": f"{exc.__class__.__name__}: {exc}"}
+
+
+def collect_business(smw_health: dict[str, Any]) -> dict[str, Any]:
+    data = smw_health.get("data") if isinstance(smw_health, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
+    counters = data.get("business_counters") if isinstance(data.get("business_counters"), dict) else {}
+    return {
+        "status": "live" if counters else "missing",
+        "source": "smw-health-summary",
+        "pending_admissions": counters.get("pending_admissions"),
+        "payments": counters.get("payments"),
+        "users": counters.get("users"),
+        "raw_counters": counters,
+    }
 
 
 def _backup_dirs() -> list[Path]:
@@ -193,7 +208,91 @@ def collect_git() -> dict[str, Any]:
     branch_code, branch, _ = run_cmd(["git", "branch", "--show-current"], timeout=5, cwd=str(cwd))
     dirty_code, dirty, _ = run_cmd(["git", "status", "--porcelain"], timeout=5, cwd=str(cwd))
     msg_code, msg, _ = run_cmd(["git", "log", "-1", "--pretty=%s"], timeout=5, cwd=str(cwd))
-    return {"sha": sha, "short_sha": sha[:12], "branch": branch if branch_code == 0 else None, "is_dirty": bool(dirty) if dirty_code == 0 else None, "last_commit_message": msg if msg_code == 0 else None}
+    return {"sha": sha, "short_sha": sha[:12], "branch": branch if branch_code == 0 else None, "is_dirty": bool(dirty) if dirty_code == 0 else None, "last_commit_message": msg if msg_code == 0 else None, "status": "live"}
+
+
+def collect_deployment(git_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "live" if git_info.get("sha") else "missing",
+        "git": git_info,
+        "current_branch": git_info.get("branch"),
+        "current_sha": git_info.get("sha"),
+        "short_sha": git_info.get("short_sha"),
+        "is_dirty": git_info.get("is_dirty"),
+        "last_commit_message": git_info.get("last_commit_message"),
+    }
+
+
+def psql_query(sql: str, timeout: int = 8) -> tuple[bool, list[dict[str, Any]] | str]:
+    dbname = env("POSTGRES_DB", env("DBNAME", "smw_db"))
+    user = env("POSTGRES_USER", env("DBUSER", "postgres"))
+    host = env("POSTGRES_HOST", env("DBHOST", "127.0.0.1"))
+    port = env("POSTGRES_PORT", env("DBPORT", "5432"))
+    cmd = ["psql", "-X", "-q", "-t", "-A", "-F", "\t", "-h", host, "-p", port, "-U", user, "-d", dbname, "-c", sql]
+    env_vars = os.environ.copy()
+    password = env("POSTGRES_PASSWORD", env("DBPASSWORD", ""))
+    if password:
+        env_vars["PGPASSWORD"] = password
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False, env=env_vars)
+    except Exception as exc:
+        return False, f"{exc.__class__.__name__}: {exc}"
+    if proc.returncode != 0:
+        return False, proc.stderr.strip() or proc.stdout.strip()
+    rows: list[dict[str, Any]] = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            rows.append({"raw": line})
+    return True, rows
+
+
+def collect_database() -> dict[str, Any]:
+    if env("POSTGRES_COLLECT_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
+        return {"status": "disabled"}
+    sql = """
+    SELECT json_build_object(
+      'connections', (SELECT count(*) FROM pg_stat_activity),
+      'active_connections', (SELECT count(*) FROM pg_stat_activity WHERE state = 'active'),
+      'idle_connections', (SELECT count(*) FROM pg_stat_activity WHERE state = 'idle'),
+      'waiting_queries', (SELECT count(*) FROM pg_stat_activity WHERE wait_event IS NOT NULL),
+      'database_size_bytes', pg_database_size(current_database()),
+      'deadlocks', COALESCE((SELECT sum(deadlocks) FROM pg_stat_database WHERE datname=current_database()),0),
+      'xact_commit', COALESCE((SELECT sum(xact_commit) FROM pg_stat_database WHERE datname=current_database()),0),
+      'xact_rollback', COALESCE((SELECT sum(xact_rollback) FROM pg_stat_database WHERE datname=current_database()),0),
+      'slow_active_queries', (SELECT count(*) FROM pg_stat_activity WHERE state='active' AND now() - query_start > interval '5 seconds')
+    )::text;
+    """
+    ok, result = psql_query(sql)
+    if not ok:
+        return {"status": "error", "error": result}
+    row = result[0] if isinstance(result, list) and result else {}
+    return {"status": "live", **(row if isinstance(row, dict) else {"raw": row})}
+
+
+def collect_queue() -> dict[str, Any]:
+    redis_cli = env("REDIS_CLI", "redis-cli")
+    redis_url = env("REDIS_URL", env("CELERY_BROKER_URL", ""))
+    queue_names = [x.strip() for x in env("CELERY_QUEUE_NAMES", "celery").split(",") if x.strip()]
+    base_cmd = [redis_cli]
+    if redis_url.startswith("redis://"):
+        base_cmd += ["-u", redis_url]
+    queues: dict[str, Any] = {}
+    total_depth = 0
+    for queue in queue_names:
+        code, stdout, stderr = run_cmd(base_cmd + ["LLEN", queue], timeout=5)
+        try:
+            depth = int(stdout.strip()) if code == 0 else None
+        except Exception:
+            depth = None
+        if depth is not None:
+            total_depth += depth
+        queues[queue] = {"depth": depth, "ok": code == 0, "error": stderr if code != 0 else None}
+    failed_units = collect_errors().get("units", {})
+    return {"status": "live", "queues": queues, "total_depth": total_depth, "worker_service": service_status(env("CELERY_WORKER_SERVICE", "celery_smw")), "beat_service": service_status(env("CELERY_BEAT_SERVICE", "celery-beat-smw")), "recent_worker_error_units": failed_units}
 
 
 def journal_lines(unit: str, since: str = "1 hour ago", priority: str | None = None, timeout: int = 8) -> list[str]:
@@ -278,7 +377,38 @@ def collect_errors() -> dict[str, Any]:
 def collect_security() -> dict[str, Any]:
     nginx_lines = journal_lines("nginx", env("SECURITY_LOG_SINCE", "1 hour ago"), timeout=8)
     fail2ban_lines = journal_lines("fail2ban", env("SECURITY_LOG_SINCE", "1 hour ago"), timeout=8)
-    return {"privacy_mode": "aggregate", "nginx_error_lines": len(nginx_lines), "fail2ban_events": len(fail2ban_lines), "fail2ban_sample": fail2ban_lines[-5:] if fail2ban_lines else []}
+    bans = len([x for x in fail2ban_lines if "Ban " in x or "already banned" in x])
+    unbans = len([x for x in fail2ban_lines if "Unban " in x])
+    return {"status": "live", "privacy_mode": "aggregate", "nginx_error_lines": len(nginx_lines), "fail2ban_events": len(fail2ban_lines), "fail2ban_bans": bans, "fail2ban_unbans": unbans, "fail2ban_sample": fail2ban_lines[-5:] if fail2ban_lines else []}
+
+
+def collect_user_experience() -> dict[str, Any]:
+    rum_file = Path(env("RUM_EVENTS_JSONL_PATH", "/var/www/html/SMW-v1/Backend/logs/ops_engine_rum_events.jsonl"))
+    if not rum_file.exists():
+        return {"status": "live", "source": "rum-jsonl", "events": 0, "note": "RUM endpoint/schema live; no browser events collected yet."}
+    try:
+        lines = rum_file.read_text(errors="replace").splitlines()[-500:]
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+    count = 0
+    lcp: list[float] = []
+    cls: list[float] = []
+    inp: list[float] = []
+    js_errors = 0
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        count += 1
+        kind = item.get("kind")
+        value = item.get("value")
+        if kind == "lcp" and isinstance(value, (int, float)): lcp.append(float(value))
+        if kind == "cls" and isinstance(value, (int, float)): cls.append(float(value))
+        if kind == "inp" and isinstance(value, (int, float)): inp.append(float(value))
+        if kind == "js_error": js_errors += 1
+    avg = lambda xs: round(sum(xs) / len(xs), 2) if xs else None
+    return {"status": "live", "source": "rum-jsonl", "events": count, "avg_lcp_ms": avg(lcp), "avg_cls": avg(cls), "avg_inp_ms": avg(inp), "js_errors": js_errors}
 
 
 def _state_file() -> Path:
@@ -312,14 +442,12 @@ def collect_request_events() -> list[dict[str, Any]]:
     max_events = env_int("REQUEST_EVENTS_MAX_SEND", 250)
     if not path.exists() or not path.is_file():
         return []
-
     state = _load_state()
     state_key = f"request_events:{path}"
     file_size = path.stat().st_size
     last_offset = int(state.get(state_key, 0) or 0)
     if last_offset < 0 or last_offset > file_size:
         last_offset = 0
-
     try:
         with path.open("rb") as fh:
             fh.seek(last_offset)
@@ -327,7 +455,6 @@ def collect_request_events() -> list[dict[str, Any]]:
             new_offset = fh.tell()
     except Exception:
         return []
-
     events: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     cutoff = time.time() - env_int("REQUEST_EVENTS_WINDOW_SECONDS", 3600)
@@ -364,13 +491,14 @@ def collect_request_events() -> list[dict[str, Any]]:
         })
         if len(events) >= max_events:
             break
-
     state[state_key] = new_offset
     _save_state(state)
     return events
 
 
 def build_payload() -> dict[str, Any]:
+    smw_health = collect_smw_health()
+    git_info = collect_git()
     services = collect_services()
     services.update(collect_pm2())
     return {
@@ -380,12 +508,17 @@ def build_payload() -> dict[str, Any]:
         "services": services,
         "resources": collect_resources(),
         "backups": collect_backups(),
-        "smw": collect_smw_health(),
+        "smw": smw_health,
+        "business": collect_business(smw_health),
+        "database": collect_database(),
+        "queue": collect_queue(),
+        "deployment": collect_deployment(git_info),
+        "user_experience": collect_user_experience(),
         "api_traffic": collect_api_traffic(),
         "request_events": collect_request_events(),
         "errors": collect_errors(),
         "security": collect_security(),
-        "meta": {"git": collect_git(), "agent_version": "0.3.1"},
+        "meta": {"git": git_info, "agent_version": "0.5.0"},
     }
 
 
