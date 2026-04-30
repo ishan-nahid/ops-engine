@@ -116,6 +116,13 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.04em; }
 .statusRow { display: flex; gap: 12px; align-items: start; border: 1px solid #e2e8f0; border-radius: 18px; padding: 13px; background: #f8fafc; }
 .statusRow strong { display: block; }
 .statusRow p { color: var(--muted); margin-top: 4px; font-size: 13px; line-height: 1.45; }
+.errorCard { display: grid; gap: 12px; border: 1px solid #fecaca; border-radius: 20px; padding: 15px; background: linear-gradient(180deg, #fff, #fff7f7); }
+.errorCard strong { display: block; margin-top: 10px; font-size: 16px; }
+.errorCard p { color: #475569; margin-top: 6px; line-height: 1.55; }
+.errorCard small { color: var(--muted); overflow-wrap: anywhere; }
+.codeLocation { border: 1px solid #e2e8f0; border-radius: 16px; padding: 12px; background: #0f172a; color: #e2e8f0; overflow-x: auto; }
+.codeLocation code { color: #bfdbfe; white-space: normal; overflow-wrap: anywhere; }
+.codeLocation pre { margin: 10px 0 0; color: #f8fafc; white-space: pre-wrap; font-size: 12px; line-height: 1.5; }
 .coverageGrid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 12px; }
 .coverageCard { border-radius: 20px; padding: 15px; background: #fff; min-height: 145px; }
 .coverageCard strong { display: block; margin-top: 12px; font-size: 16px; }
