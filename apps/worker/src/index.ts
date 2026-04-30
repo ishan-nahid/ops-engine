@@ -200,6 +200,7 @@ async function recordRequestEvents(env: Env, heartbeatId: string, source: string
   const users = new Set<string>();
   const slow: Record<string, unknown>[] = [];
   const receivedAt = nowIso();
+  let inserted = 0;
 
   for (const raw of events.slice(0, 500)) {
     const ev = asRecord(raw);
@@ -208,6 +209,7 @@ async function recordRequestEvents(env: Env, heartbeatId: string, source: string
     const status = Number(ev.status || 0);
     const duration = Number(ev.duration_ms || 0);
     const role = String(ev.role || "unknown").slice(0, 40);
+    const requestId = typeof ev.request_id === "string" ? ev.request_id : null;
     const hashedIp = typeof ev.hashed_ip === "string" ? ev.hashed_ip : null;
     const hashedUser = typeof ev.hashed_user_id === "string" ? ev.hashed_user_id : null;
     if (hashedIp) ips.add(hashedIp);
@@ -215,14 +217,15 @@ async function recordRequestEvents(env: Env, heartbeatId: string, source: string
     roles[role] = (roles[role] || 0) + 1;
     statuses[String(status)] = (statuses[String(status)] || 0) + 1;
     endpoints[endpoint] = (endpoints[endpoint] || 0) + 1;
-    if (duration >= 1000) slow.push({ method, endpoint, status, duration_ms: duration, request_id: ev.request_id || null });
-    await env.DB.prepare("INSERT INTO request_events (id, heartbeat_id, source, ts, received_at, request_id, method, endpoint, status, duration_ms, role, hashed_user_id, hashed_ip, user_agent_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(uuid(), heartbeatId, source, String(ev.ts || receivedAt), receivedAt, ev.request_id || null, method, endpoint, status, duration, role, hashedUser, hashedIp, ev.user_agent_hash || null, JSON.stringify({ privacy: "hashed" })).run();
+    if (duration >= 1000) slow.push({ method, endpoint, status, duration_ms: duration, request_id: requestId });
+    const result = await env.DB.prepare("INSERT OR IGNORE INTO request_events (id, heartbeat_id, source, ts, received_at, request_id, method, endpoint, status, duration_ms, role, hashed_user_id, hashed_ip, user_agent_hash, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(uuid(), heartbeatId, source, String(ev.ts || receivedAt), receivedAt, requestId, method, endpoint, status, duration, role, hashedUser, hashedIp, ev.user_agent_hash || null, JSON.stringify({ privacy: "hashed" })).run();
+    inserted += Number(result.meta?.changes || 0);
   }
 
   const topEndpoints = Object.entries(endpoints).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([endpoint, count]) => ({ endpoint, count }));
   await env.DB.prepare("INSERT INTO request_event_summaries (id, heartbeat_id, source, collected_at, window_seconds, total_events, unique_ip_hashes, unique_user_hashes, roles_json, endpoints_json, statuses_json, slow_events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(uuid(), heartbeatId, source, receivedAt, 3600, events.length, ips.size, users.size, JSON.stringify(roles), JSON.stringify(topEndpoints), JSON.stringify(statuses), JSON.stringify(slow.slice(0, 20))).run();
+    .bind(uuid(), heartbeatId, source, receivedAt, 3600, inserted, ips.size, users.size, JSON.stringify(roles), JSON.stringify(topEndpoints), JSON.stringify(statuses), JSON.stringify(slow.slice(0, 20))).run();
 }
 
 async function handleHeartbeat(request: Request, env: Env): Promise<Response> {
@@ -297,13 +300,48 @@ async function handleErrors(env: Env): Promise<Response> {
   return json({ error_groups: rows.results || [] });
 }
 
+async function handleHistory(env: Env): Promise<Response> {
+  const server = await env.DB.prepare("SELECT collected_at, hostname, disk_used_pct, memory_used_pct, load1, load5, load15, uptime_seconds, cpu_count FROM server_snapshots ORDER BY collected_at DESC LIMIT 120").all();
+  const traffic = await env.DB.prepare("SELECT collected_at, total_requests, total_2xx, total_3xx, total_4xx, total_5xx FROM api_traffic_summaries ORDER BY collected_at DESC LIMIT 120").all();
+  const uptime = await env.DB.prepare("SELECT target_key, checked_at, ok, status_code, latency_ms FROM uptime_checks ORDER BY checked_at DESC LIMIT 120").all();
+  const requests = await env.DB.prepare("SELECT ts, method, endpoint, status, duration_ms, role FROM request_events ORDER BY ts DESC LIMIT 120").all();
+  return json({ server: (server.results || []).reverse(), traffic: (traffic.results || []).reverse(), uptime: (uptime.results || []).reverse(), requests: (requests.results || []).reverse() });
+}
+
+async function handleHistoryServer(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare("SELECT collected_at, hostname, disk_used_pct, memory_used_pct, load1, load5, load15, uptime_seconds, cpu_count FROM server_snapshots ORDER BY collected_at DESC LIMIT 240").all();
+  return json({ server: (rows.results || []).reverse() });
+}
+
+async function handleHistoryTraffic(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare("SELECT collected_at, total_requests, total_2xx, total_3xx, total_4xx, total_5xx FROM api_traffic_summaries ORDER BY collected_at DESC LIMIT 240").all();
+  return json({ traffic: (rows.results || []).reverse() });
+}
+
+async function handleHistoryUptime(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare("SELECT target_key, checked_at, ok, status_code, latency_ms FROM uptime_checks ORDER BY checked_at DESC LIMIT 240").all();
+  return json({ uptime: (rows.results || []).reverse() });
+}
+
+async function handleHistoryRequests(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare("SELECT ts, method, endpoint, status, duration_ms, role FROM request_events ORDER BY ts DESC LIMIT 240").all();
+  return json({ requests: (rows.results || []).reverse() });
+}
+
+async function testAlert(request: Request, env: Env): Promise<Response> {
+  const authError = requireBearer(request, env.AGENT_TOKEN);
+  if (authError) return authError;
+  await sendAlert(env, "✅ <b>Ops Engine Telegram alert test</b>\nWorker → Telegram is configured correctly.");
+  return json({ ok: true });
+}
+
 async function checkTarget(env: Env, targetKey: string, targetUrl: string): Promise<void> {
   const started = Date.now();
   let ok = 0;
   let statusCode: number | null = null;
   let error: string | null = null;
   try {
-    const headers: Record<string, string> = { "user-agent": "ops-engine/0.3" };
+    const headers: Record<string, string> = { "user-agent": "ops-engine/0.4" };
     if (targetKey === "smw-health-summary" && env.SMW_HEALTH_SUMMARY_TOKEN) headers.authorization = `Bearer ${env.SMW_HEALTH_SUMMARY_TOKEN}`;
     const response = await fetch(targetUrl, { method: "GET", headers });
     statusCode = response.status;
@@ -326,7 +364,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/$/, "") || "/";
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(env) });
-  if (path === "/" || path === "/api") return json({ name: env.APP_NAME || "Ops Engine", status: "ok", version: "0.3" });
+  if (path === "/" || path === "/api") return json({ name: env.APP_NAME || "Ops Engine", status: "ok", version: "0.4" });
   if (path === "/api/agent/heartbeat" && request.method === "POST") return handleHeartbeat(request, env);
   if (path === "/api/status/latest" && request.method === "GET") return handleLatest(env);
   if (path === "/api/services" && request.method === "GET") return handleServices(env);
@@ -337,6 +375,12 @@ async function route(request: Request, env: Env): Promise<Response> {
     return resolveIncident(request, env, id);
   }
   if (path === "/api/errors" && request.method === "GET") return handleErrors(env);
+  if (path === "/api/history" && request.method === "GET") return handleHistory(env);
+  if (path === "/api/history/server" && request.method === "GET") return handleHistoryServer(env);
+  if (path === "/api/history/traffic" && request.method === "GET") return handleHistoryTraffic(env);
+  if (path === "/api/history/uptime" && request.method === "GET") return handleHistoryUptime(env);
+  if (path === "/api/history/requests" && request.method === "GET") return handleHistoryRequests(env);
+  if (path === "/api/test-alert" && request.method === "POST") return testAlert(request, env);
   return json({ detail: "Not found." }, { status: 404 });
 }
 
