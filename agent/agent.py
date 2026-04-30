@@ -4,8 +4,9 @@
 Collects local service/resource health on the SMW droplet and pushes it to the
 external Ops Engine Worker. This script opens no public port.
 
-Privacy note: API traffic collection is aggregate-only by default. It does not
-send raw IP addresses, emails, cookies, request bodies, or query strings.
+Privacy note: API traffic collection is aggregate by default. Optional request
+events are expected to already be sanitized by SMW: hashed IP/user, no bodies,
+no cookies, no auth headers, no raw emails, and no query strings.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import shutil
 import socket
 import subprocess
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -60,12 +61,7 @@ def service_status(name: str) -> dict[str, Any]:
     code, stdout, stderr = run_cmd(["systemctl", "is-active", name], timeout=5)
     status = stdout or "unknown"
     enabled_code, enabled_out, _ = run_cmd(["systemctl", "is-enabled", name], timeout=5)
-    return {
-        "status": status,
-        "ok": code == 0 and status == "active",
-        "enabled": enabled_out if enabled_code in (0, 1) else "unknown",
-        "error": stderr or None,
-    }
+    return {"status": status, "ok": code == 0 and status == "active", "enabled": enabled_out if enabled_code in (0, 1) else "unknown", "error": stderr or None}
 
 
 def collect_services() -> dict[str, Any]:
@@ -77,7 +73,6 @@ def collect_resources() -> dict[str, Any]:
     disk_path = env("DISK_PATH", "/")
     total, used, free = shutil.disk_usage(disk_path)
     disk_used_pct = round((used / total) * 100, 2) if total else None
-
     mem_total = mem_available = None
     try:
         parsed = {}
@@ -88,22 +83,15 @@ def collect_resources() -> dict[str, Any]:
         mem_available = parsed.get("MemAvailable")
     except Exception:
         pass
-
-    memory_used_pct = None
-    if mem_total and mem_available is not None:
-        memory_used_pct = round(((mem_total - mem_available) / mem_total) * 100, 2)
-
-    uptime_seconds = None
+    memory_used_pct = round(((mem_total - mem_available) / mem_total) * 100, 2) if mem_total and mem_available is not None else None
     try:
         uptime_seconds = int(float(Path("/proc/uptime").read_text().split()[0]))
     except Exception:
-        pass
-
+        uptime_seconds = None
     try:
         load_avg = list(os.getloadavg())
     except Exception:
         load_avg = None
-
     return {
         "disk_path": disk_path,
         "disk_total_bytes": total,
@@ -134,16 +122,7 @@ def collect_pm2() -> dict[str, Any]:
         if app.get("name") == app_name:
             env_data = app.get("pm2_env") or {}
             monit = app.get("monit") or {}
-            return {
-                app_name: {
-                    "status": env_data.get("status", "unknown"),
-                    "ok": env_data.get("status") == "online",
-                    "restart_time": env_data.get("restart_time"),
-                    "uptime": env_data.get("pm_uptime"),
-                    "memory_bytes": monit.get("memory"),
-                    "cpu_pct": monit.get("cpu"),
-                }
-            }
+            return {app_name: {"status": env_data.get("status", "unknown"), "ok": env_data.get("status") == "online", "restart_time": env_data.get("restart_time"), "uptime": env_data.get("pm_uptime"), "memory_bytes": monit.get("memory"), "cpu_pct": monit.get("cpu")}}
     return {app_name: {"status": "missing", "ok": False}}
 
 
@@ -151,7 +130,7 @@ def collect_smw_health() -> dict[str, Any]:
     url = env("SMW_HEALTH_SUMMARY_URL")
     if not url:
         return {"status": "unknown", "error": "SMW_HEALTH_SUMMARY_URL not configured"}
-    headers = {"user-agent": "ops-engine-agent/0.2"}
+    headers = {"user-agent": "ops-engine-agent/0.3"}
     token = env("SMW_HEALTH_SUMMARY_TOKEN")
     if token:
         headers["authorization"] = f"Bearer {token}"
@@ -174,14 +153,7 @@ def _backup_dirs() -> list[Path]:
     dirs = [Path(x.strip()).expanduser() for x in raw.split(",") if x.strip()]
     if dirs:
         return dirs
-    candidates = [
-        Path("/home/ishan/db_backups"),
-        Path("/home/ishan/backups"),
-        Path("/home/ishan/backup"),
-        Path("/var/backups"),
-        Path("/home/ishan/log_exports"),
-    ]
-    return candidates
+    return [Path("/home/ishan/db_backups"), Path("/home/ishan/backups"), Path("/home/ishan/backup"), Path("/var/backups"), Path("/home/ishan/log_exports")]
 
 
 def collect_backups() -> dict[str, Any]:
@@ -205,14 +177,7 @@ def collect_backups() -> dict[str, Any]:
     latest = max(files, key=lambda p: p.stat().st_mtime)
     age_hours = round((time.time() - latest.stat().st_mtime) / 3600, 2)
     status = "ok" if age_hours <= env_int("BACKUP_OK_HOURS", 24) else "stale" if age_hours <= env_int("BACKUP_STALE_HOURS", 48) else "critical"
-    return {
-        "status": status,
-        "searched_dirs": searched,
-        "latest_backup_path": str(latest),
-        "latest_backup_age_hours": age_hours,
-        "latest_backup_size_bytes": latest.stat().st_size,
-        "matched_files": len(files),
-    }
+    return {"status": status, "searched_dirs": searched, "latest_backup_path": str(latest), "latest_backup_age_hours": age_hours, "latest_backup_size_bytes": latest.stat().st_size, "matched_files": len(files)}
 
 
 def collect_git() -> dict[str, Any]:
@@ -228,13 +193,7 @@ def collect_git() -> dict[str, Any]:
     branch_code, branch, _ = run_cmd(["git", "branch", "--show-current"], timeout=5, cwd=str(cwd))
     dirty_code, dirty, _ = run_cmd(["git", "status", "--porcelain"], timeout=5, cwd=str(cwd))
     msg_code, msg, _ = run_cmd(["git", "log", "-1", "--pretty=%s"], timeout=5, cwd=str(cwd))
-    return {
-        "sha": sha,
-        "short_sha": sha[:12],
-        "branch": branch if branch_code == 0 else None,
-        "is_dirty": bool(dirty) if dirty_code == 0 else None,
-        "last_commit_message": msg if msg_code == 0 else None,
-    }
+    return {"sha": sha, "short_sha": sha[:12], "branch": branch if branch_code == 0 else None, "is_dirty": bool(dirty) if dirty_code == 0 else None, "last_commit_message": msg if msg_code == 0 else None}
 
 
 def journal_lines(unit: str, since: str = "1 hour ago", priority: str | None = None, timeout: int = 8) -> list[str]:
@@ -293,20 +252,7 @@ def collect_api_traffic() -> dict[str, Any]:
         if duration >= env_int("SLOW_API_MS", 1000):
             slow.append({"method": method, "path": safe_path, "status": status, "duration_ms": duration})
     slow.sort(key=lambda x: int(x.get("duration_ms", 0)), reverse=True)
-    return {
-        "privacy_mode": "aggregate",
-        "window_seconds": 3600,
-        "total_requests": total,
-        "total_2xx": total_2xx,
-        "total_3xx": total_3xx,
-        "total_4xx": total_4xx,
-        "total_5xx": total_5xx,
-        "top_paths": [{"path": path, "count": count} for path, count in paths.most_common(12)],
-        "status_codes": dict(status_codes),
-        "methods": dict(methods),
-        "slow_paths": slow[:10],
-        "metadata": {"source": "journalctl", "unit": env("API_LOG_UNIT", "gunicorn-smw")},
-    }
+    return {"privacy_mode": "aggregate", "window_seconds": 3600, "total_requests": total, "total_2xx": total_2xx, "total_3xx": total_3xx, "total_4xx": total_4xx, "total_5xx": total_5xx, "top_paths": [{"path": path, "count": count} for path, count in paths.most_common(12)], "status_codes": dict(status_codes), "methods": dict(methods), "slow_paths": slow[:10], "metadata": {"source": "journalctl", "unit": env("API_LOG_UNIT", "gunicorn-smw")}}
 
 
 def collect_errors() -> dict[str, Any]:
@@ -330,15 +276,55 @@ def collect_errors() -> dict[str, Any]:
 
 
 def collect_security() -> dict[str, Any]:
-    # Aggregate-only security signals. No raw IPs are sent by default.
     nginx_lines = journal_lines("nginx", env("SECURITY_LOG_SINCE", "1 hour ago"), timeout=8)
     fail2ban_lines = journal_lines("fail2ban", env("SECURITY_LOG_SINCE", "1 hour ago"), timeout=8)
-    return {
-        "privacy_mode": "aggregate",
-        "nginx_error_lines": len(nginx_lines),
-        "fail2ban_events": len(fail2ban_lines),
-        "fail2ban_sample": fail2ban_lines[-5:] if fail2ban_lines else [],
-    }
+    return {"privacy_mode": "aggregate", "nginx_error_lines": len(nginx_lines), "fail2ban_events": len(fail2ban_lines), "fail2ban_sample": fail2ban_lines[-5:] if fail2ban_lines else []}
+
+
+def collect_request_events() -> list[dict[str, Any]]:
+    path = Path(env("REQUEST_EVENTS_JSONL_PATH", "/var/www/html/SMW-v1/Backend/logs/ops_engine_api_events.jsonl"))
+    max_events = env_int("REQUEST_EVENTS_MAX_SEND", 250)
+    max_bytes = env_int("REQUEST_EVENTS_TAIL_BYTES", 1_000_000)
+    if not path.exists() or not path.is_file():
+        return []
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > max_bytes:
+                fh.seek(-max_bytes, os.SEEK_END)
+                fh.readline()
+            raw = fh.read().decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    events: list[dict[str, Any]] = []
+    cutoff = time.time() - env_int("REQUEST_EVENTS_WINDOW_SECONDS", 3600)
+    for line in raw.splitlines()[-max_events * 3:]:
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(item, dict):
+            continue
+        ts = str(item.get("ts", ""))
+        try:
+            normalized = ts.replace("Z", "+00:00")
+            if datetime.fromisoformat(normalized).timestamp() < cutoff:
+                continue
+        except Exception:
+            pass
+        events.append({
+            "ts": item.get("ts"),
+            "request_id": item.get("request_id"),
+            "method": item.get("method"),
+            "endpoint": item.get("endpoint"),
+            "status": item.get("status"),
+            "duration_ms": item.get("duration_ms"),
+            "role": item.get("role"),
+            "hashed_user_id": item.get("hashed_user_id"),
+            "hashed_ip": item.get("hashed_ip"),
+            "user_agent_hash": item.get("user_agent_hash"),
+        })
+    return events[-max_events:]
 
 
 def build_payload() -> dict[str, Any]:
@@ -353,9 +339,10 @@ def build_payload() -> dict[str, Any]:
         "backups": collect_backups(),
         "smw": collect_smw_health(),
         "api_traffic": collect_api_traffic(),
+        "request_events": collect_request_events(),
         "errors": collect_errors(),
         "security": collect_security(),
-        "meta": {"git": collect_git(), "agent_version": "0.2.0"},
+        "meta": {"git": collect_git(), "agent_version": "0.3.0"},
     }
 
 
