@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, Clock, Database, HardDrive, RefreshCw, Server, ShieldAlert, WifiOff } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock, Code2, Database, GitBranch, HardDrive, RefreshCw, Server, ShieldAlert, WifiOff } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -7,30 +7,27 @@ type ApiEnvelope = {
   heartbeat?: any;
   uptime?: any[];
   incidents?: any[];
+  deploy?: any;
+  server?: any;
+  api_traffic?: any;
+  backup?: any;
 };
 
-type ServiceEnvelope = {
-  heartbeat_id?: string;
-  services?: any[];
-};
+type ServiceEnvelope = { heartbeat_id?: string; services?: any[] };
 
 const API_BASE = import.meta.env.VITE_OPS_API_BASE || "/api";
 
 function statusClass(status?: string | null): string {
   const value = String(status || "unknown").toLowerCase();
   if (["healthy", "ok", "active", "running", "online"].includes(value)) return "good";
-  if (["degraded", "warning", "pending"].includes(value)) return "warn";
-  if (["critical", "failed", "down", "inactive", "error"].includes(value)) return "bad";
+  if (["degraded", "warning", "pending", "stale"].includes(value)) return "warn";
+  if (["critical", "failed", "down", "inactive", "error", "missing"].includes(value)) return "bad";
   return "unknown";
 }
 
 function parseJson(value: unknown): any {
   if (typeof value !== "string") return value || {};
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(value); } catch { return {}; }
 }
 
 function formatAgo(iso?: string): string {
@@ -46,6 +43,14 @@ function formatAgo(iso?: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function fmtUptime(seconds?: number | null): string {
+  if (!seconds && seconds !== 0) return "—";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+
 async function fetchJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -53,21 +58,17 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 function MetricCard({ title, value, detail, icon, tone }: { title: string; value: React.ReactNode; detail?: React.ReactNode; icon: React.ReactNode; tone?: string }) {
-  return (
-    <section className={`metric ${tone || ""}`}>
-      <div className="metricIcon">{icon}</div>
-      <div>
-        <p>{title}</p>
-        <strong>{value}</strong>
-        {detail ? <span>{detail}</span> : null}
-      </div>
-    </section>
-  );
+  return <section className={`metric ${tone || ""}`}><div className="metricIcon">{icon}</div><div><p>{title}</p><strong>{value}</strong>{detail ? <span>{detail}</span> : null}</div></section>;
+}
+
+function SmallJson({ value }: { value: unknown }) {
+  return <code>{JSON.stringify(parseJson(value)).slice(0, 140)}</code>;
 }
 
 function App() {
   const [latest, setLatest] = useState<ApiEnvelope | null>(null);
   const [services, setServices] = useState<ServiceEnvelope | null>(null);
+  const [errors, setErrors] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<string | null>(null);
@@ -76,12 +77,14 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [latestPayload, servicePayload] = await Promise.all([
+      const [latestPayload, servicePayload, errorPayload] = await Promise.all([
         fetchJson<ApiEnvelope>("/status/latest"),
         fetchJson<ServiceEnvelope>("/services"),
+        fetchJson<any>("/errors"),
       ]);
       setLatest(latestPayload);
       setServices(servicePayload);
+      setErrors(errorPayload.error_groups || []);
       setLastRefresh(new Date().toISOString());
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "Unable to load dashboard data");
@@ -90,11 +93,7 @@ function App() {
     }
   };
 
-  useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
+  useEffect(() => { void load(); const id = window.setInterval(() => void load(), 60_000); return () => window.clearInterval(id); }, []);
 
   const heartbeat = latest?.heartbeat || null;
   const summary = useMemo(() => parseJson(heartbeat?.summary_json), [heartbeat]);
@@ -102,6 +101,13 @@ function App() {
   const openIncidents = latest?.incidents || [];
   const uptime = latest?.uptime || [];
   const serviceRows = services?.services || [];
+  const backup = latest?.backup || {};
+  const deploy = latest?.deploy || {};
+  const server = latest?.server || {};
+  const apiTraffic = latest?.api_traffic || {};
+  const topPaths = parseJson(apiTraffic.top_paths_json) || [];
+  const slowPaths = parseJson(apiTraffic.slow_paths_json) || [];
+  const statusCodes = parseJson(apiTraffic.status_codes_json) || {};
 
   return (
     <main>
@@ -109,83 +115,54 @@ function App() {
         <div>
           <p className="eyebrow">SMW Mission Control</p>
           <h1>Ops Engine</h1>
-          <p className="subtitle">External operational dashboard for sunnysir.com. The droplet agent pushes health data outward; this page should remain useful even when SMW is degraded.</p>
+          <p className="subtitle">External operational dashboard for sunnysir.com. Built for SWE, SRE, and DevSecOps visibility without keeping ops analytics inside the SMW business app.</p>
         </div>
-        <button className="refresh" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={loading ? "spin" : ""} size={18} /> Refresh
-        </button>
+        <button className="refresh" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={18} /> Refresh</button>
       </header>
 
-      {error ? (
-        <section className="banner bad">
-          <WifiOff size={18} /> Unable to load Ops Engine API: {error}
-        </section>
-      ) : null}
+      {error ? <section className="banner bad"><WifiOff size={18} /> Unable to load Ops Engine API: {error}</section> : null}
 
       <section className="grid metrics">
         <MetricCard title="Overall status" value={status.toUpperCase()} detail={`Last heartbeat ${formatAgo(heartbeat?.received_at)}`} icon={statusClass(status) === "good" ? <CheckCircle2 /> : <AlertTriangle />} tone={statusClass(status)} />
-        <MetricCard title="Host" value={heartbeat?.hostname || "unknown"} detail={heartbeat?.source || "no source yet"} icon={<Server />} />
-        <MetricCard title="Disk used" value={summary?.disk_used_pct != null ? `${summary.disk_used_pct}%` : "—"} detail="from latest agent heartbeat" icon={<HardDrive />} tone={summary?.disk_used_pct >= 90 ? "bad" : summary?.disk_used_pct >= 80 ? "warn" : ""} />
-        <MetricCard title="Memory used" value={summary?.memory_used_pct != null ? `${summary.memory_used_pct}%` : "—"} detail="from latest agent heartbeat" icon={<Activity />} tone={summary?.memory_used_pct >= 95 ? "bad" : summary?.memory_used_pct >= 85 ? "warn" : ""} />
-        <MetricCard title="Backup age" value={summary?.latest_backup_age_hours != null ? `${summary.latest_backup_age_hours}h` : "—"} detail="latest detected backup" icon={<Database />} tone={summary?.latest_backup_age_hours >= 36 ? "warn" : ""} />
+        <MetricCard title="Host" value={heartbeat?.hostname || "unknown"} detail={`${heartbeat?.source || "no source"} · uptime ${fmtUptime(server?.uptime_seconds)}`} icon={<Server />} />
+        <MetricCard title="Disk used" value={summary?.disk_used_pct != null ? `${summary.disk_used_pct}%` : "—"} detail={`load ${server?.load1 ?? "—"} / ${server?.load5 ?? "—"} / ${server?.load15 ?? "—"}`} icon={<HardDrive />} tone={summary?.disk_used_pct >= 90 ? "bad" : summary?.disk_used_pct >= 80 ? "warn" : ""} />
+        <MetricCard title="Memory used" value={summary?.memory_used_pct != null ? `${summary.memory_used_pct}%` : "—"} detail={`${server?.cpu_count ?? "—"} CPU cores`} icon={<Activity />} tone={summary?.memory_used_pct >= 95 ? "bad" : summary?.memory_used_pct >= 85 ? "warn" : ""} />
+        <MetricCard title="Backup age" value={backup?.latest_backup_age_hours != null ? `${backup.latest_backup_age_hours}h` : summary?.latest_backup_age_hours != null ? `${summary.latest_backup_age_hours}h` : "—"} detail={backup?.status ? `status: ${backup.status}` : "latest detected backup"} icon={<Database />} tone={statusClass(backup?.status)} />
         <MetricCard title="Open incidents" value={openIncidents.length} detail={lastRefresh ? `updated ${formatAgo(lastRefresh)}` : "not refreshed"} icon={<ShieldAlert />} tone={openIncidents.length ? "bad" : "good"} />
       </section>
 
+      <section className="grid metrics secondaryMetrics">
+        <MetricCard title="Deploy" value={deploy?.short_sha || summary?.sha?.slice?.(0, 12) || "—"} detail={`${deploy?.branch || summary?.branch || "unknown branch"}${deploy?.is_dirty ? " · dirty" : ""}`} icon={<GitBranch />} />
+        <MetricCard title="API requests" value={apiTraffic?.total_requests ?? "—"} detail={`last ${apiTraffic?.window_seconds || 3600}s · privacy: ${apiTraffic?.privacy_mode || "aggregate"}`} icon={<Code2 />} />
+        <MetricCard title="API 5xx" value={apiTraffic?.total_5xx ?? "—"} detail={`4xx: ${apiTraffic?.total_4xx ?? "—"} · status ${JSON.stringify(statusCodes).slice(0, 45)}`} icon={<AlertTriangle />} tone={(apiTraffic?.total_5xx || 0) > 0 ? "bad" : "good"} />
+      </section>
+
       <section className="panel">
-        <div className="panelHeader">
-          <div>
-            <p className="eyebrow">Service Health</p>
-            <h2>Latest service snapshots</h2>
-          </div>
-          <span className="muted">Heartbeat: {services?.heartbeat_id || "none"}</span>
-        </div>
-        <div className="tableWrap">
-          <table>
-            <thead><tr><th>Service</th><th>Status</th><th>Checked</th><th>Detail</th></tr></thead>
-            <tbody>
-              {serviceRows.length ? serviceRows.map((svc, idx) => (
-                <tr key={`${svc.service_name}-${idx}`}>
-                  <td>{svc.service_name}</td>
-                  <td><span className={`pill ${statusClass(svc.status)}`}>{svc.status}</span></td>
-                  <td>{formatAgo(svc.checked_at)}</td>
-                  <td><code>{JSON.stringify(parseJson(svc.detail)).slice(0, 110)}</code></td>
-                </tr>
-              )) : <tr><td colSpan={4}>No service snapshots yet. Install the droplet agent first.</td></tr>}
-            </tbody>
-          </table>
-        </div>
+        <div className="panelHeader"><div><p className="eyebrow">Service Health</p><h2>Latest service snapshots</h2></div><span className="muted">Heartbeat: {services?.heartbeat_id || "none"}</span></div>
+        <div className="tableWrap"><table><thead><tr><th>Service</th><th>Status</th><th>Checked</th><th>Detail</th></tr></thead><tbody>
+          {serviceRows.length ? serviceRows.map((svc, idx) => <tr key={`${svc.service_name}-${idx}`}><td>{svc.service_name}</td><td><span className={`pill ${statusClass(svc.status)}`}>{svc.status}</span></td><td>{formatAgo(svc.checked_at)}</td><td><SmallJson value={svc.detail} /></td></tr>) : <tr><td colSpan={4}>No service snapshots yet.</td></tr>}
+        </tbody></table></div>
       </section>
 
       <section className="twoCol">
-        <section className="panel">
-          <div className="panelHeader"><div><p className="eyebrow">Incidents</p><h2>Open incidents</h2></div></div>
-          <div className="stack">
-            {openIncidents.length ? openIncidents.map((item) => (
-              <article className="incident" key={item.id}>
-                <span className={`pill ${statusClass(item.severity)}`}>{item.severity}</span>
-                <strong>{item.title}</strong>
-                <p>{item.summary}</p>
-                <small>{item.source} · {formatAgo(item.started_at)}</small>
-              </article>
-            )) : <p className="muted">No open incidents.</p>}
-          </div>
-        </section>
+        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">API Traffic</p><h2>Top endpoints</h2></div></div><div className="stack">
+          {topPaths.length ? topPaths.map((p: any, idx: number) => <article className="uptime" key={`${p.path}-${idx}`}><span className="dot good" /><div><strong>{p.path}</strong><p>{p.count} requests</p></div></article>) : <p className="muted">No API traffic summaries yet. Wait for next agent heartbeat.</p>}
+          {slowPaths.length ? <div className="miniBlock"><strong>Slow endpoints</strong>{slowPaths.slice(0, 5).map((p: any, idx: number) => <p key={idx}><code>{p.method} {p.path}</code> · {p.duration_ms}ms · {p.status}</p>)}</div> : null}
+        </div></section>
 
-        <section className="panel">
-          <div className="panelHeader"><div><p className="eyebrow">Uptime</p><h2>Recent checks</h2></div><Clock size={18} /></div>
-          <div className="stack">
-            {uptime.length ? uptime.slice(0, 10).map((item, idx) => (
-              <article className="uptime" key={`${item.target_key}-${idx}`}>
-                <span className={`dot ${item.ok ? "good" : "bad"}`} />
-                <div>
-                  <strong>{item.target_key}</strong>
-                  <p>{item.status_code || "—"} · {item.latency_ms ?? "—"}ms · {formatAgo(item.checked_at)}</p>
-                  {item.error ? <small>{item.error}</small> : null}
-                </div>
-              </article>
-            )) : <p className="muted">No uptime checks yet. Deploy the Worker cron after configuring Cloudflare.</p>}
-          </div>
-        </section>
+        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Sentry-lite</p><h2>Error groups</h2></div></div><div className="stack">
+          {errors.length ? errors.slice(0, 10).map((item) => <article className="incident" key={item.id}><span className={`pill ${statusClass(item.latest_severity)}`}>{item.latest_severity}</span><strong>{item.fingerprint}</strong><p>{item.latest_message}</p><small>{item.latest_path || "no path"} · count {item.count} · {formatAgo(item.last_seen)}</small></article>) : <p className="muted">No error groups recorded.</p>}
+        </div></section>
+      </section>
+
+      <section className="twoCol">
+        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Incidents</p><h2>Open incidents</h2></div></div><div className="stack">
+          {openIncidents.length ? openIncidents.map((item) => <article className="incident" key={item.id}><span className={`pill ${statusClass(item.severity)}`}>{item.severity}</span><strong>{item.title}</strong><p>{item.summary}</p><small>{item.source} · {formatAgo(item.started_at)}</small></article>) : <p className="muted">No open incidents.</p>}
+        </div></section>
+
+        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Uptime</p><h2>Recent checks</h2></div><Clock size={18} /></div><div className="stack">
+          {uptime.length ? uptime.slice(0, 10).map((item, idx) => <article className="uptime" key={`${item.target_key}-${idx}`}><span className={`dot ${item.ok ? "good" : "bad"}`} /><div><strong>{item.target_key}</strong><p>{item.status_code || "—"} · {item.latency_ms ?? "—"}ms · {formatAgo(item.checked_at)}</p>{item.error ? <small>{item.error}</small> : null}</div></article>) : <p className="muted">No uptime checks yet.</p>}
+        </div></section>
       </section>
     </main>
   );
