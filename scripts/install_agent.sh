@@ -15,6 +15,37 @@ mkdir -p "$INSTALL_DIR"
 cp "$REPO_DIR/agent/agent.py" "$INSTALL_DIR/agent.py"
 cp "$REPO_DIR/agent/requirements.txt" "$INSTALL_DIR/requirements.txt"
 
+# Defensive hotfix: journalctl may print "-- No entries --" for empty
+# priority-filtered logs. The agent must not turn that sentinel into a fake
+# Sentry-lite error group such as nginx:LogError:-.
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('/usr/local/ops-engine-agent/agent.py')
+text = path.read_text()
+old = '''def journal_lines(unit: str, since: str = "1 hour ago", priority: str | None = None, timeout: int = 8) -> list[str]:
+    cmd = ["journalctl", "-u", unit, "--since", since, "--no-pager", "-o", "cat"]
+    if priority:
+        cmd.extend(["-p", priority])
+    code, stdout, _ = run_cmd(cmd, timeout=timeout)
+    if code != 0 and not stdout:
+        return []
+    return [line for line in stdout.splitlines() if line.strip()]
+'''
+new = '''def journal_lines(unit: str, since: str = "1 hour ago", priority: str | None = None, timeout: int = 8) -> list[str]:
+    cmd = ["journalctl", "-u", unit, "--since", since, "--no-pager", "-o", "cat"]
+    if priority:
+        cmd.extend(["-p", priority])
+    code, stdout, _ = run_cmd(cmd, timeout=timeout)
+    if code != 0 and not stdout:
+        return []
+    ignored = {"-- No entries --", "No journal files were found."}
+    return [line for line in stdout.splitlines() if line.strip() and line.strip() not in ignored]
+'''
+if old in text:
+    path.write_text(text.replace(old, new))
+PY
+
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
   cp "$REPO_DIR/agent/.env.example" "$INSTALL_DIR/.env"
   echo "Created $INSTALL_DIR/.env. Edit it before enabling the timer."
