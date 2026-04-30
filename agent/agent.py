@@ -130,7 +130,7 @@ def collect_smw_health() -> dict[str, Any]:
     url = env("SMW_HEALTH_SUMMARY_URL")
     if not url:
         return {"status": "unknown", "error": "SMW_HEALTH_SUMMARY_URL not configured"}
-    headers = {"user-agent": "ops-engine-agent/0.3"}
+    headers = {"user-agent": "ops-engine-agent/0.3.1"}
     token = env("SMW_HEALTH_SUMMARY_TOKEN")
     if token:
         headers["authorization"] = f"Bearer {token}"
@@ -281,24 +281,57 @@ def collect_security() -> dict[str, Any]:
     return {"privacy_mode": "aggregate", "nginx_error_lines": len(nginx_lines), "fail2ban_events": len(fail2ban_lines), "fail2ban_sample": fail2ban_lines[-5:] if fail2ban_lines else []}
 
 
+def _state_file() -> Path:
+    configured = env("OPS_ENGINE_AGENT_STATE_FILE", "/usr/local/ops-engine-agent/state.json")
+    return Path(configured)
+
+
+def _load_state() -> dict[str, Any]:
+    path = _state_file()
+    try:
+        if path.exists():
+            return json.loads(path.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _save_state(state: dict[str, Any]) -> None:
+    path = _state_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, sort_keys=True))
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
 def collect_request_events() -> list[dict[str, Any]]:
     path = Path(env("REQUEST_EVENTS_JSONL_PATH", "/var/www/html/SMW-v1/Backend/logs/ops_engine_api_events.jsonl"))
     max_events = env_int("REQUEST_EVENTS_MAX_SEND", 250)
-    max_bytes = env_int("REQUEST_EVENTS_TAIL_BYTES", 1_000_000)
     if not path.exists() or not path.is_file():
         return []
+
+    state = _load_state()
+    state_key = f"request_events:{path}"
+    file_size = path.stat().st_size
+    last_offset = int(state.get(state_key, 0) or 0)
+    if last_offset < 0 or last_offset > file_size:
+        last_offset = 0
+
     try:
-        size = path.stat().st_size
         with path.open("rb") as fh:
-            if size > max_bytes:
-                fh.seek(-max_bytes, os.SEEK_END)
-                fh.readline()
+            fh.seek(last_offset)
             raw = fh.read().decode("utf-8", errors="replace")
+            new_offset = fh.tell()
     except Exception:
         return []
+
     events: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     cutoff = time.time() - env_int("REQUEST_EVENTS_WINDOW_SECONDS", 3600)
-    for line in raw.splitlines()[-max_events * 3:]:
+    for line in raw.splitlines():
         try:
             item = json.loads(line)
         except Exception:
@@ -312,6 +345,11 @@ def collect_request_events() -> list[dict[str, Any]]:
                 continue
         except Exception:
             pass
+        request_id = str(item.get("request_id") or "")
+        if request_id and request_id in seen_ids:
+            continue
+        if request_id:
+            seen_ids.add(request_id)
         events.append({
             "ts": item.get("ts"),
             "request_id": item.get("request_id"),
@@ -324,7 +362,12 @@ def collect_request_events() -> list[dict[str, Any]]:
             "hashed_ip": item.get("hashed_ip"),
             "user_agent_hash": item.get("user_agent_hash"),
         })
-    return events[-max_events:]
+        if len(events) >= max_events:
+            break
+
+    state[state_key] = new_offset
+    _save_state(state)
+    return events
 
 
 def build_payload() -> dict[str, Any]:
@@ -342,7 +385,7 @@ def build_payload() -> dict[str, Any]:
         "request_events": collect_request_events(),
         "errors": collect_errors(),
         "security": collect_security(),
-        "meta": {"git": collect_git(), "agent_version": "0.3.0"},
+        "meta": {"git": collect_git(), "agent_version": "0.3.1"},
     }
 
 
