@@ -1,0 +1,10 @@
+{
+  "name": "ops-engine",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix apps/dashboard install && npm --prefix apps/dashboard run build",
+    "dashboard:build": "npm --prefix apps/dashboard run build",
+    "worker:deploy": "npm --prefix apps/worker run deploy"
+  }
+}
