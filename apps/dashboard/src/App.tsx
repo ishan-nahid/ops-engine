@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, Clock, Code2, Database, GitBranch, HardDrive, RefreshCw, Server, ShieldAlert, WifiOff } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Clock, Code2, Database, GitBranch, HardDrive, RefreshCw, Server, ShieldAlert, Users, WifiOff } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -11,6 +11,8 @@ type ApiEnvelope = {
   server?: any;
   api_traffic?: any;
   backup?: any;
+  request_summary?: any;
+  request_events?: any[];
 };
 
 type ServiceEnvelope = { heartbeat_id?: string; services?: any[] };
@@ -108,6 +110,10 @@ function App() {
   const topPaths = parseJson(apiTraffic.top_paths_json) || [];
   const slowPaths = parseJson(apiTraffic.slow_paths_json) || [];
   const statusCodes = parseJson(apiTraffic.status_codes_json) || {};
+  const requestSummary = latest?.request_summary || {};
+  const requestEvents = latest?.request_events || [];
+  const requestRoles = parseJson(requestSummary.roles_json) || {};
+  const requestEndpoints = parseJson(requestSummary.endpoints_json) || [];
 
   return (
     <main>
@@ -135,6 +141,26 @@ function App() {
         <MetricCard title="Deploy" value={deploy?.short_sha || summary?.sha?.slice?.(0, 12) || "—"} detail={`${deploy?.branch || summary?.branch || "unknown branch"}${deploy?.is_dirty ? " · dirty" : ""}`} icon={<GitBranch />} />
         <MetricCard title="API requests" value={apiTraffic?.total_requests ?? "—"} detail={`last ${apiTraffic?.window_seconds || 3600}s · privacy: ${apiTraffic?.privacy_mode || "aggregate"}`} icon={<Code2 />} />
         <MetricCard title="API 5xx" value={apiTraffic?.total_5xx ?? "—"} detail={`4xx: ${apiTraffic?.total_4xx ?? "—"} · status ${JSON.stringify(statusCodes).slice(0, 45)}`} icon={<AlertTriangle />} tone={(apiTraffic?.total_5xx || 0) > 0 ? "bad" : "good"} />
+        <MetricCard title="Request events" value={requestSummary?.total_events ?? 0} detail={`${requestSummary?.unique_user_hashes ?? 0} users · ${requestSummary?.unique_ip_hashes ?? 0} IP hashes`} icon={<Users />} />
+      </section>
+
+      <section className="panel">
+        <div className="panelHeader"><div><p className="eyebrow">Sanitized Request Telemetry</p><h2>Recent API events</h2></div><span className="muted">hashed identifiers only</span></div>
+        <div className="tableWrap"><table><thead><tr><th>Time</th><th>Request ID</th><th>Method</th><th>Endpoint</th><th>Status</th><th>Duration</th><th>Role</th><th>User Hash</th><th>IP Hash</th></tr></thead><tbody>
+          {requestEvents.length ? requestEvents.map((ev, idx) => <tr key={`${ev.request_id}-${idx}`}><td>{formatAgo(ev.ts)}</td><td><code>{ev.request_id || "—"}</code></td><td>{ev.method}</td><td><code>{ev.endpoint}</code></td><td><span className={`pill ${ev.status >= 500 ? "bad" : ev.status >= 400 ? "warn" : "good"}`}>{ev.status}</span></td><td>{ev.duration_ms}ms</td><td>{ev.role}</td><td><code>{ev.hashed_user_id || "—"}</code></td><td><code>{ev.hashed_ip || "—"}</code></td></tr>) : <tr><td colSpan={9}>No request events yet. Enable SMW request telemetry and wait for the next agent heartbeat.</td></tr>}
+        </tbody></table></div>
+      </section>
+
+      <section className="twoCol">
+        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Request Summary</p><h2>Roles and endpoints</h2></div></div><div className="stack">
+          <div className="miniBlock"><strong>Roles</strong><p><code>{JSON.stringify(requestRoles)}</code></p></div>
+          {requestEndpoints.length ? requestEndpoints.slice(0, 10).map((p: any, idx: number) => <article className="uptime" key={`${p.endpoint}-${idx}`}><span className="dot good" /><div><strong>{p.endpoint}</strong><p>{p.count} events</p></div></article>) : <p className="muted">No request endpoint summary yet.</p>}
+        </div></section>
+
+        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">API Traffic</p><h2>Top endpoints</h2></div></div><div className="stack">
+          {topPaths.length ? topPaths.map((p: any, idx: number) => <article className="uptime" key={`${p.path}-${idx}`}><span className="dot good" /><div><strong>{p.path}</strong><p>{p.count} requests</p></div></article>) : <p className="muted">No API traffic summaries yet. Wait for next agent heartbeat.</p>}
+          {slowPaths.length ? <div className="miniBlock"><strong>Slow endpoints</strong>{slowPaths.slice(0, 5).map((p: any, idx: number) => <p key={idx}><code>{p.method} {p.path}</code> · {p.duration_ms}ms · {p.status}</p>)}</div> : null}
+        </div></section>
       </section>
 
       <section className="panel">
@@ -145,25 +171,18 @@ function App() {
       </section>
 
       <section className="twoCol">
-        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">API Traffic</p><h2>Top endpoints</h2></div></div><div className="stack">
-          {topPaths.length ? topPaths.map((p: any, idx: number) => <article className="uptime" key={`${p.path}-${idx}`}><span className="dot good" /><div><strong>{p.path}</strong><p>{p.count} requests</p></div></article>) : <p className="muted">No API traffic summaries yet. Wait for next agent heartbeat.</p>}
-          {slowPaths.length ? <div className="miniBlock"><strong>Slow endpoints</strong>{slowPaths.slice(0, 5).map((p: any, idx: number) => <p key={idx}><code>{p.method} {p.path}</code> · {p.duration_ms}ms · {p.status}</p>)}</div> : null}
-        </div></section>
-
         <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Sentry-lite</p><h2>Error groups</h2></div></div><div className="stack">
           {errors.length ? errors.slice(0, 10).map((item) => <article className="incident" key={item.id}><span className={`pill ${statusClass(item.latest_severity)}`}>{item.latest_severity}</span><strong>{item.fingerprint}</strong><p>{item.latest_message}</p><small>{item.latest_path || "no path"} · count {item.count} · {formatAgo(item.last_seen)}</small></article>) : <p className="muted">No error groups recorded.</p>}
         </div></section>
-      </section>
 
-      <section className="twoCol">
         <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Incidents</p><h2>Open incidents</h2></div></div><div className="stack">
           {openIncidents.length ? openIncidents.map((item) => <article className="incident" key={item.id}><span className={`pill ${statusClass(item.severity)}`}>{item.severity}</span><strong>{item.title}</strong><p>{item.summary}</p><small>{item.source} · {formatAgo(item.started_at)}</small></article>) : <p className="muted">No open incidents.</p>}
         </div></section>
-
-        <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Uptime</p><h2>Recent checks</h2></div><Clock size={18} /></div><div className="stack">
-          {uptime.length ? uptime.slice(0, 10).map((item, idx) => <article className="uptime" key={`${item.target_key}-${idx}`}><span className={`dot ${item.ok ? "good" : "bad"}`} /><div><strong>{item.target_key}</strong><p>{item.status_code || "—"} · {item.latency_ms ?? "—"}ms · {formatAgo(item.checked_at)}</p>{item.error ? <small>{item.error}</small> : null}</div></article>) : <p className="muted">No uptime checks yet.</p>}
-        </div></section>
       </section>
+
+      <section className="panel"><div className="panelHeader"><div><p className="eyebrow">Uptime</p><h2>Recent checks</h2></div><Clock size={18} /></div><div className="stack">
+        {uptime.length ? uptime.slice(0, 10).map((item, idx) => <article className="uptime" key={`${item.target_key}-${idx}`}><span className={`dot ${item.ok ? "good" : "bad"}`} /><div><strong>{item.target_key}</strong><p>{item.status_code || "—"} · {item.latency_ms ?? "—"}ms · {formatAgo(item.checked_at)}</p>{item.error ? <small>{item.error}</small> : null}</div></article>) : <p className="muted">No uptime checks yet.</p>}
+      </div></section>
     </main>
   );
 }
