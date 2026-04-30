@@ -142,7 +142,7 @@ async function recordErrors(env: Env, raw: Rec) {
   const groups = Array.isArray(raw.groups) ? raw.groups : [];
   for (const g0 of groups) {
     const g = asRecord(g0), fp = String(g.fingerprint || "unknown"), at = nowIso();
-    await env.DB.prepare("INSERT INTO error_groups (id,fingerprint,status,first_seen,last_seen,count,latest_message,latest_traceback,latest_request_id,latest_path,latest_severity,metadata_json) VALUES (?,?,'open',?,?,?,?,?,?,?,?,?) ON CONFLICT(fingerprint) DO UPDATE SET last_seen=excluded.last_seen,count=count+excluded.count,latest_message=excluded.latest_message,latest_traceback=excluded.latest_traceback,latest_request_id=excluded.latest_request_id,latest_path=excluded.latest_path,latest_severity=excluded.latest_severity,metadata_json=excluded.metadata_json").bind(uuid(), fp, at, at, Number(g.count || 1), String(g.message || fp).slice(0, 1000), g.traceback || null, g.request_id || null, g.path || null, String(g.severity || "error"), JSON.stringify(g)).run();
+    await env.DB.prepare("INSERT INTO error_groups (id,fingerprint,status,first_seen,last_seen,count,latest_message,latest_traceback,latest_request_id,latest_path,latest_severity,metadata_json) VALUES (?,?,'open',?,?,?,?,?,?,?,?,?) ON CONFLICT(fingerprint) DO UPDATE SET last_seen=excluded.last_seen,count=count+excluded.count,latest_message=excluded.latest_message,latest_traceback=excluded.latest_traceback,latest_request_id=excluded.latest_request_id,latest_path=excluded.latest_path,latest_severity=excluded.latest_severity,metadata_json=excluded.metadata_json").bind(uuid(), fp, at, at, Number(g.count || 1), String(g.message || fp).slice(0, 1000), g.traceback || null, g.request_id || null, g.path || g.file || null, String(g.severity || "error"), JSON.stringify(g)).run();
   }
 }
 async function recordRequests(env: Env, heartbeatId: string, source: string, events: unknown[]) {
@@ -196,7 +196,7 @@ async function services(env: Env) {
   const rows = await env.DB.prepare("SELECT service_name,status,detail,checked_at FROM service_snapshots WHERE heartbeat_id=? ORDER BY service_name ASC").bind(h.id).all();
   return json({ heartbeat_id: h.id, services: rows.results || [] });
 }
-async function errors(env: Env) { const rows = await env.DB.prepare("SELECT id,fingerprint,status,first_seen,last_seen,count,latest_message,latest_request_id,latest_path,latest_severity FROM error_groups ORDER BY last_seen DESC LIMIT 50").all(); return json({ error_groups: rows.results || [] }); }
+async function errors(env: Env) { const rows = await env.DB.prepare("SELECT id,fingerprint,status,first_seen,last_seen,count,latest_message,latest_traceback,latest_request_id,latest_path,latest_severity,metadata_json FROM error_groups ORDER BY last_seen DESC LIMIT 50").all(); return json({ error_groups: rows.results || [] }); }
 async function incidents(env: Env) { const rows = await env.DB.prepare("SELECT id,title,severity,status,source,started_at,resolved_at,summary,metadata_json FROM incidents ORDER BY started_at DESC LIMIT 50").all(); return json({ incidents: rows.results || [] }); }
 async function history(env: Env) {
   const server = await env.DB.prepare("SELECT collected_at,hostname,disk_used_pct,memory_used_pct,load1,load5,load15,uptime_seconds,cpu_count FROM server_snapshots ORDER BY collected_at DESC LIMIT 120").all();
@@ -208,7 +208,7 @@ async function history(env: Env) {
 async function checkTarget(env: Env, key: string, targetUrl: string) {
   const start = Date.now(); let ok = 0, statusCode: number | null = null, error: string | null = null;
   try {
-    const headers: Record<string, string> = { "user-agent": "ops-engine/0.5" };
+    const headers: Record<string, string> = { "user-agent": "ops-engine/0.6" };
     if (key === "smw-health-summary" && env.SMW_HEALTH_SUMMARY_TOKEN) headers.authorization = `Bearer ${env.SMW_HEALTH_SUMMARY_TOKEN}`;
     const res = await fetch(targetUrl, { headers }); statusCode = res.status; ok = res.ok ? 1 : 0;
   } catch (e) { error = e instanceof Error ? e.message : "unknown fetch error"; }
@@ -220,7 +220,7 @@ async function checkTarget(env: Env, key: string, targetUrl: string) {
 async function route(request: Request, env: Env) {
   const url = new URL(request.url), path = url.pathname.replace(/\/$/, "") || "/";
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(env) });
-  if (path === "/" || path === "/api") return json({ name: env.APP_NAME || "Ops Engine", status: "ok", version: "0.5" });
+  if (path === "/" || path === "/api") return json({ name: env.APP_NAME || "Ops Engine", status: "ok", version: "0.6" });
   if (path === "/api/agent/heartbeat" && request.method === "POST") return heartbeat(request, env);
   if (path === "/api/status/latest" && request.method === "GET") return latest(env);
   if (path === "/api/services" && request.method === "GET") return services(env);
