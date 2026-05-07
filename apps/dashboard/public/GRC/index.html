@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMW GRC Dashboard | Ops Engine</title>
+  <link rel="stylesheet" href="/ops-page/ops-page.css" />
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Governance Risk Compliance</p>
+        <h1>SMW GRC Dashboard</h1>
+        <p class="subtitle">Compliance readiness dashboard for SOC 2 and ISO 27001 style controls. This page tracks readiness signals, evidence freshness, operational controls, gaps, and risk indicators. It does not claim certification.</p>
+        <nav class="nav">
+          <a href="/">Mission Control</a>
+          <a href="/SOC">SOC</a>
+          <a href="/NOC">NOC</a>
+          <a href="/GRC">GRC</a>
+          <a href="#controls">Controls</a>
+          <a href="#evidence">Evidence</a>
+          <a href="#risk">Risk</a>
+          <a href="#frameworks">Frameworks</a>
+        </nav>
+      </div>
+      <button id="refreshBtn">↻ Refresh</button>
+    </header>
+
+    <div id="error" class="banner"></div>
+
+    <section class="section">
+      <div class="notice">
+        <strong>Readiness note:</strong> This dashboard helps prepare for SOC 2 / ISO 27001 evidence collection. It is not a certification claim. Formal certification requires policies, management approval, access reviews, risk treatment, audit evidence, and external audit activity.
+      </div>
+    </section>
+
+    <section class="section" id="overview">
+      <div class="section-head">
+        <p class="eyebrow">Compliance posture</p>
+        <h2>Readiness overview</h2>
+        <p id="heartbeatMeta" class="small muted">Loading heartbeat…</p>
+      </div>
+      <div class="grid metrics" id="metrics"></div>
+    </section>
+
+    <section class="section" id="controls">
+      <div class="section-head">
+        <p class="eyebrow">Control coverage</p>
+        <h2>Automated control evidence</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Core controls</p><h3>Operational control status</h3></div></div>
+          <div class="status-list" id="controlList"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Control families</p><h3>Coverage by domain</h3></div></div>
+          <div class="bars" id="domainBars"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="evidence">
+      <div class="section-head">
+        <p class="eyebrow">Evidence collection</p>
+        <h2>Live evidence signals</h2>
+      </div>
+      <div class="grid four" id="evidenceCards"></div>
+      <div class="card" style="margin-top:14px">
+        <div class="card-head"><div><p class="eyebrow">Evidence register</p><h3>Evidence items generated from Ops Engine telemetry</h3></div></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Evidence</th><th>Status</th><th>Source</th><th>Freshness</th><th>Framework mapping</th></tr></thead>
+            <tbody id="evidenceRows"><tr><td colspan="5">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="risk">
+      <div class="section-head">
+        <p class="eyebrow">Risk register</p>
+        <h2>Current risk indicators</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Open risk indicators</p><h3>Auto-derived gaps and warnings</h3></div></div>
+          <div class="status-list" id="riskList"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Trends</p><h3>Evidence trends</h3></div></div>
+          <div class="grid two">
+            <div id="requestSpark"></div>
+            <div id="fiveSpark"></div>
+            <div id="diskSpark"></div>
+            <div id="memorySpark"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="frameworks">
+      <div class="section-head">
+        <p class="eyebrow">Framework mapping</p>
+        <h2>SOC 2 and ISO 27001 readiness map</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">SOC 2 style</p><h3>Trust Services Criteria readiness</h3></div></div>
+          <div class="status-list" id="soc2List"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">ISO 27001 style</p><h3>ISMS domain readiness</h3></div></div>
+          <div class="status-list" id="isoList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="manual-gaps">
+      <div class="section-head">
+        <p class="eyebrow">Manual controls</p>
+        <h2>Items that require human evidence</h2>
+      </div>
+      <div class="grid three" id="manualCards"></div>
+    </section>
+  </main>
+
+  <script src="/ops-page/ops-page.js"></script>
+  <script>
+    const O = OpsPage;
+
+    function toneFromBool(ok) { return ok ? "good" : "bad"; }
+    function pctTone(value, warn, bad) { const v = O.n(value); return v >= bad ? "bad" : v >= warn ? "warn" : "good"; }
+    function backupTone(status, age) {
+      const s = String(status || "unknown").toLowerCase();
+      if (["ok", "live", "healthy"].includes(s)) return "good";
+      if (["stale", "warning"].includes(s) || O.n(age) >= 24) return "warn";
+      if (["critical", "missing", "error"].includes(s) || O.n(age) >= 48) return "bad";
+      return O.statusClass(status);
+    }
+    function evidenceStatus(tone) {
+      if (tone === "good") return "covered";
+      if (tone === "warn") return "needs-review";
+      if (tone === "bad") return "gap";
+      return "unknown";
+    }
+    function row(name, status, source, freshness, mapping) {
+      return `<tr><td><strong>${O.esc(name)}</strong></td><td><span class="pill ${O.statusClass(status)}">${O.esc(status)}</span></td><td>${O.esc(source)}</td><td>${O.esc(freshness)}</td><td>${O.esc(mapping)}</td></tr>`;
+    }
+
+    async function load() {
+      O.$("refreshBtn").disabled = true;
+      O.$("error").style.display = "none";
+      try {
+        const { latest, services, history, incidents, errors } = await O.loadBundle();
+        const heartbeat = latest.heartbeat || {};
+        const cc = latest.control_center || {};
+        const production = cc.production || {};
+        const database = cc.database || {};
+        const queue = cc.queue || {};
+        const deployment = cc.deployment || latest.deploy || {};
+        const security = cc.security || {};
+        const ux = cc.user_experience || {};
+        const server = latest.server || {};
+        const backup = latest.backup || {};
+        const apiTraffic = latest.api_traffic || {};
+        const serviceRows = O.asArray(services.services);
+        const incidentRows = O.asArray(latest.incidents || incidents.incidents);
+        const errorGroups = O.asArray(errors.error_groups);
+        const histServer = O.asArray(history.server);
+        const histTraffic = O.asArray(history.traffic);
+
+        const smwStatus = String((production.smw || {}).status || heartbeat.status || "unknown");
+        const diskUsed = server.disk_used_pct ?? (production.resources || {}).disk_used_pct;
+        const memoryUsed = server.memory_used_pct ?? (production.resources || {}).memory_used_pct;
+        const queueDepth = O.n(queue.total_depth);
+        const total5xx = O.n(apiTraffic.total_5xx);
+        const backupAge = O.n(backup.latest_backup_age_hours, -1);
+        const unhealthyServices = serviceRows.filter(s => O.statusClass(s.status) === "bad").length;
+        const dirtyDeploy = Boolean(deployment.is_dirty || latest.deploy?.is_dirty);
+        const hasRecentHeartbeat = heartbeat.received_at && (Date.now() - new Date(heartbeat.received_at).getTime()) < 20 * 60 * 1000;
+
+        const controlItems = [
+          { name: "Production monitoring", domain: "Security Monitoring", tone: hasRecentHeartbeat ? "good" : "bad", source: "Ops Engine heartbeat", freshness: O.ago(heartbeat.received_at), map: "SOC 2 Security / ISO Ops Security" },
+          { name: "Availability monitoring", domain: "Availability", tone: O.statusClass(smwStatus), source: "SMW health + uptime", freshness: O.ago(heartbeat.received_at), map: "SOC 2 Availability / ISO Continuity" },
+          { name: "Backup freshness", domain: "Business Continuity", tone: backupTone(backup.status, backup.latest_backup_age_hours), source: "Droplet backup scan", freshness: backupAge >= 0 ? `${backupAge}h old` : "unknown", map: "SOC 2 Availability / ISO Continuity" },
+          { name: "Change tracking", domain: "Change Management", tone: dirtyDeploy ? "warn" : "good", source: "Git branch/SHA/dirty state", freshness: deployment.short_sha || latest.deploy?.short_sha || "unknown", map: "SOC 2 Change Management / ISO Change Control" },
+          { name: "Service health", domain: "Operations Security", tone: unhealthyServices ? "bad" : "good", source: "systemd + PM2 snapshots", freshness: `${unhealthyServices} unhealthy`, map: "SOC 2 Security / ISO Operations" },
+          { name: "Database health", domain: "System Integrity", tone: O.n(database.lock_waiting_queries) ? "warn" : O.statusClass(database.status), source: "PostgreSQL collector", freshness: `${database.connections ?? "—"} connections`, map: "SOC 2 Processing Integrity / ISO Operations" },
+          { name: "Queue processing", domain: "Operations Security", tone: queueDepth > 100 ? "bad" : queueDepth > 20 ? "warn" : "good", source: "Redis/Celery queue depth", freshness: `${queueDepth} queued`, map: "SOC 2 Availability / ISO Operations" },
+          { name: "Security event monitoring", domain: "Security Monitoring", tone: O.n(security.fail2ban_bans) || errorGroups.length ? "warn" : "good", source: "fail2ban/nginx/error groups", freshness: `${security.fail2ban_bans || 0} bans · ${errorGroups.length} error groups`, map: "SOC 2 Security / ISO Incident Management" },
+          { name: "Incident response evidence", domain: "Incident Response", tone: incidentRows.length ? "warn" : "good", source: "Ops Engine incidents", freshness: `${incidentRows.length} open`, map: "SOC 2 Security / ISO Incident Management" },
+        ];
+
+        const gaps = controlItems.filter(x => x.tone === "bad").length;
+        const warnings = controlItems.filter(x => x.tone === "warn").length;
+        const covered = controlItems.filter(x => x.tone === "good").length;
+        const readiness = Math.max(0, Math.round((covered / controlItems.length) * 100) - warnings * 3 - gaps * 10);
+        const readinessTone = readiness >= 80 ? "good" : readiness >= 55 ? "warn" : "bad";
+
+        O.$("heartbeatMeta").textContent = `Heartbeat ${O.ago(heartbeat.received_at)} · Source ${heartbeat.source || "unknown"} · API ${O.API_BASE}`;
+        O.$("metrics").innerHTML = [
+          O.metric("Readiness score", `${readiness}/100`, "Auto-derived readiness; not a certification claim.", readinessTone),
+          O.metric("Covered controls", covered, `${controlItems.length} auto-evaluated controls`, covered >= 7 ? "good" : "warn"),
+          O.metric("Control warnings", warnings, "Needs review before audit", warnings ? "warn" : "good"),
+          O.metric("Control gaps", gaps, "Failed or missing evidence", gaps ? "bad" : "good"),
+          O.metric("Evidence freshness", hasRecentHeartbeat ? "Fresh" : "Stale", `heartbeat ${O.ago(heartbeat.received_at)}`, hasRecentHeartbeat ? "good" : "bad"),
+          O.metric("Open incidents", incidentRows.length, incidentRows.length ? "must be reviewed" : "clear", incidentRows.length ? "warn" : "good"),
+        ].join("");
+
+        O.$("controlList").innerHTML = controlItems.map(x => O.statusRow(x.name, evidenceStatus(x.tone), `${x.source} · ${x.freshness}`)).join("");
+        const domainCounts = {};
+        for (const item of controlItems) {
+          domainCounts[item.domain] = domainCounts[item.domain] || { total: 0, covered: 0, warn: 0, gap: 0 };
+          domainCounts[item.domain].total += 1;
+          if (item.tone === "good") domainCounts[item.domain].covered += 1;
+          if (item.tone === "warn") domainCounts[item.domain].warn += 1;
+          if (item.tone === "bad") domainCounts[item.domain].gap += 1;
+        }
+        O.bars("domainBars", Object.entries(domainCounts).map(([label, v]) => ({ label, value: Math.round((v.covered / v.total) * 100), tone: v.gap ? "bad" : v.warn ? "warn" : "good" })));
+
+        O.$("evidenceCards").innerHTML = [
+          O.metric("Backup evidence", backup.status || "unknown", backup.latest_backup_age_hours != null ? `${backup.latest_backup_age_hours}h old` : "no age", backupTone(backup.status, backup.latest_backup_age_hours)),
+          O.metric("Deploy evidence", deployment.short_sha || latest.deploy?.short_sha || "—", dirtyDeploy ? "dirty working tree" : "clean working tree", dirtyDeploy ? "warn" : "good"),
+          O.metric("Security evidence", `${security.fail2ban_bans || 0} bans`, `${security.nginx_error_lines || 0} nginx error lines`, O.n(security.fail2ban_bans) ? "warn" : "good"),
+          O.metric("UX evidence", `${ux.events || 0} RUM events`, `${ux.js_errors || 0} JS errors`, O.n(ux.js_errors) ? "warn" : "good"),
+        ].join("");
+        O.$("evidenceRows").innerHTML = controlItems.map(x => row(x.name, evidenceStatus(x.tone), x.source, x.freshness, x.map)).join("");
+
+        const risks = [];
+        if (!hasRecentHeartbeat) risks.push(["Ops telemetry stale", "gap", "Agent heartbeat is not fresh enough for audit evidence."]);
+        if (gaps) risks.push(["Control gaps present", "gap", `${gaps} automated controls are failing or missing.`]);
+        if (warnings) risks.push(["Controls need review", "needs-review", `${warnings} controls should be reviewed before audit.`]);
+        if (backupAge >= 24) risks.push(["Backup freshness risk", backupAge >= 48 ? "gap" : "needs-review", `Latest backup age is ${backupAge}h.`]);
+        if (dirtyDeploy) risks.push(["Deployment traceability warning", "needs-review", "Production working tree appears dirty."]);
+        if (total5xx > 0) risks.push(["Recent 5xx errors", "needs-review", `${total5xx} server errors in latest traffic window.`]);
+        if (incidentRows.length) risks.push(["Open incidents", "needs-review", `${incidentRows.length} incidents require disposition.`]);
+        if (!risks.length) risks.push(["No auto-derived high-risk gaps", "covered", "Current automated GRC signals are clear."]);
+        O.$("riskList").innerHTML = risks.map(r => O.statusRow(r[0], r[1], r[2])).join("");
+
+        O.spark("requestSpark", "Requests/window", histTraffic.map(x => O.n(x.total_requests)), "good", "");
+        O.spark("fiveSpark", "5xx/window", histTraffic.map(x => O.n(x.total_5xx)), total5xx ? "bad" : "good", "");
+        O.spark("diskSpark", "Disk used", histServer.map(x => O.n(x.disk_used_pct)), pctTone(diskUsed, 80, 90), "%");
+        O.spark("memorySpark", "Memory used", histServer.map(x => O.n(x.memory_used_pct)), pctTone(memoryUsed, 85, 95), "%");
+
+        const soc2 = [
+          ["Security", warnings || gaps ? "needs-review" : "covered", "Security monitoring, access-adjacent telemetry, incidents, and error groups."],
+          ["Availability", O.statusClass(smwStatus) === "good" && backupTone(backup.status, backup.latest_backup_age_hours) !== "bad" ? "covered" : "needs-review", "Uptime, NOC health, backups, queue depth, and service health."],
+          ["Confidentiality", "partial", "Supported by privacy-safe telemetry; still needs policy and access review evidence."],
+          ["Processing Integrity", O.n(database.lock_waiting_queries) ? "needs-review" : "partial", "Database health evidence exists; business process integrity needs manual evidence."],
+          ["Privacy", "partial", "Telemetry avoids raw PII; privacy notices and data-retention evidence still needed."],
+        ];
+        O.$("soc2List").innerHTML = soc2.map(x => O.statusRow(x[0], x[1], x[2])).join("");
+
+        const iso = [
+          ["Information security policies", "needs-review", "Policy register must be maintained manually."],
+          ["Access control", "needs-review", "Admin/user access reviews require manual evidence."],
+          ["Operations security", unhealthyServices ? "needs-review" : "covered", "Service health, logs, backup status, queue and DB telemetry."],
+          ["Incident management", incidentRows.length ? "needs-review" : "covered", "Ops Engine incidents and SOC/NOC evidence."],
+          ["Business continuity", backupTone(backup.status, backup.latest_backup_age_hours) === "good" ? "covered" : "needs-review", "Backup freshness and availability monitoring."],
+          ["Supplier relationships", "needs-review", "Vendor register and review evidence must be maintained manually."],
+        ];
+        O.$("isoList").innerHTML = iso.map(x => O.statusRow(x[0], x[1], x[2])).join("");
+
+        O.$("manualCards").innerHTML = [
+          O.metric("Policy approvals", "Manual", "Security, privacy, incident, backup, and access policies need approval records.", "warn"),
+          O.metric("Access reviews", "Manual", "Production/admin access reviews should be recorded monthly or quarterly.", "warn"),
+          O.metric("Restore tests", "Manual", "Backup existence is automated; restore-test evidence still needs a record.", "warn"),
+          O.metric("Vendor reviews", "Manual", "Cloudflare, DigitalOcean, GitHub, email/payment vendors need review evidence.", "warn"),
+          O.metric("Risk treatment", "Manual", "Risk register needs owner, severity, treatment plan, and due date.", "warn"),
+          O.metric("Audit exports", "Planned", "Future Worker D1 tables should support exportable audit evidence.", "unknown"),
+        ].join("");
+      } catch (err) {
+        O.$("error").textContent = `Unable to load GRC data: ${err && err.message ? err.message : err}`;
+        O.$("error").style.display = "block";
+      } finally {
+        O.$("refreshBtn").disabled = false;
+      }
+    }
+
+    O.markActiveNav();
+    O.$("refreshBtn").addEventListener("click", load);
+    load();
+    setInterval(load, 60000);
+  </script>
+</body>
+</html>
