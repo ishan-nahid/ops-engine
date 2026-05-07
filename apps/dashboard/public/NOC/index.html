@@ -17,6 +17,7 @@
           <a href="/">Mission Control</a>
           <a href="/SOC">SOC</a>
           <a href="/NOC">NOC</a>
+          <a href="/GRC">GRC</a>
           <a href="#services">Services</a>
           <a href="#resources">Resources</a>
           <a href="#database">Database</a>
@@ -246,6 +247,7 @@
       }
     }
 
+    O.markActiveNav();
     O.$("refreshBtn").addEventListener("click", load);
     load();
     setInterval(load, 60000);
