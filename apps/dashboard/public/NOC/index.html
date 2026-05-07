@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMW NOC Dashboard | Ops Engine</title>
+  <link rel="stylesheet" href="/ops-page/ops-page.css" />
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Network Operations Center</p>
+        <h1>SMW NOC Dashboard</h1>
+        <p class="subtitle">Availability and infrastructure monitoring for sunnysir.com: uptime, service health, server resources, database status, Celery/Redis queues, backups, deployment state, latency, and operational incidents.</p>
+        <nav class="nav">
+          <a href="/">Mission Control</a>
+          <a href="/SOC">SOC</a>
+          <a href="/NOC">NOC</a>
+          <a href="#services">Services</a>
+          <a href="#resources">Resources</a>
+          <a href="#database">Database</a>
+          <a href="#queue">Queue</a>
+          <a href="#incidents">Incidents</a>
+        </nav>
+      </div>
+      <button id="refreshBtn">↻ Refresh</button>
+    </header>
+
+    <div id="error" class="banner"></div>
+
+    <section class="section" id="overview">
+      <div class="section-head">
+        <p class="eyebrow">Production posture</p>
+        <h2>NOC overview</h2>
+        <p id="heartbeatMeta" class="small muted">Loading heartbeat…</p>
+      </div>
+      <div class="grid metrics" id="metrics"></div>
+    </section>
+
+    <section class="section" id="resources">
+      <div class="section-head">
+        <p class="eyebrow">Infrastructure trends</p>
+        <h2>Server resource trends</h2>
+      </div>
+      <div class="grid three">
+        <div id="diskSpark"></div>
+        <div id="memorySpark"></div>
+        <div id="loadSpark"></div>
+      </div>
+    </section>
+
+    <section class="section" id="availability">
+      <div class="section-head">
+        <p class="eyebrow">Availability</p>
+        <h2>Uptime and traffic health</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Uptime checks</p><h3>Recent targets</h3></div></div>
+          <div class="status-list" id="uptimeList"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Traffic</p><h3>Requests and 5xx trends</h3></div></div>
+          <div class="grid two">
+            <div id="requestSpark"></div>
+            <div id="fiveSpark"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="services">
+      <div class="section-head">
+        <p class="eyebrow">Service health</p>
+        <h2>Systemd and PM2 services</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Critical path</p><h3>Core services</h3></div></div>
+          <div class="status-list" id="criticalServices"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">All services</p><h3>Latest snapshots</h3></div></div>
+          <div class="status-list" id="serviceList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="database">
+      <div class="section-head">
+        <p class="eyebrow">Database operations</p>
+        <h2>PostgreSQL health</h2>
+      </div>
+      <div class="grid four" id="databaseCards"></div>
+    </section>
+
+    <section class="section" id="queue">
+      <div class="section-head">
+        <p class="eyebrow">Worker operations</p>
+        <h2>Celery and Redis queue health</h2>
+      </div>
+      <div class="grid three" id="queueCards"></div>
+      <div class="card" style="margin-top:14px">
+        <div class="card-head"><div><p class="eyebrow">Queues</p><h3>Depth by queue</h3></div></div>
+        <div class="bars" id="queueBars"></div>
+      </div>
+    </section>
+
+    <section class="section" id="deployment">
+      <div class="section-head">
+        <p class="eyebrow">Deployment</p>
+        <h2>Current release state</h2>
+      </div>
+      <div class="grid four" id="deployCards"></div>
+    </section>
+
+    <section class="section" id="incidents">
+      <div class="section-head">
+        <p class="eyebrow">Operations response</p>
+        <h2>Incidents and backup status</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Incidents</p><h3>Open incidents</h3></div></div>
+          <div class="status-list" id="incidentList"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><p class="eyebrow">Backups</p><h3>Latest backup check</h3></div></div>
+          <div class="grid three" id="backupCards"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/ops-page/ops-page.js"></script>
+  <script>
+    const O = OpsPage;
+    const criticalNames = ["nginx", "gunicorn-smw", "smw-frontend", "postgresql@16-main", "redis-server", "celery_smw", "celery-beat-smw"];
+
+    function serviceTone(status) { return O.statusClass(status); }
+    function queueTone(depth) { return O.n(depth) > 100 ? "bad" : O.n(depth) > 20 ? "warn" : "good"; }
+    function pctTone(value, warn, bad) { const v = O.n(value); return v >= bad ? "bad" : v >= warn ? "warn" : "good"; }
+    function backupTone(status, age) {
+      const s = String(status || "unknown").toLowerCase();
+      if (["ok", "live", "healthy"].includes(s)) return "good";
+      if (["stale", "warning"].includes(s)) return "warn";
+      if (O.n(age) >= 48 || ["critical", "missing", "error"].includes(s)) return "bad";
+      return O.statusClass(status);
+    }
+
+    async function load() {
+      O.$("refreshBtn").disabled = true;
+      O.$("error").style.display = "none";
+      try {
+        const { latest, services, history, incidents } = await O.loadBundle();
+        const heartbeat = latest.heartbeat || {};
+        const cc = latest.control_center || {};
+        const production = cc.production || {};
+        const database = cc.database || {};
+        const queue = cc.queue || {};
+        const deployment = cc.deployment || latest.deploy || {};
+        const server = latest.server || {};
+        const backup = latest.backup || {};
+        const apiTraffic = latest.api_traffic || {};
+        const uptimeRows = O.asArray(latest.uptime);
+        const serviceRows = O.asArray(services.services);
+        const incidentRows = O.asArray(latest.incidents || incidents.incidents);
+        const histServer = O.asArray(history.server);
+        const histTraffic = O.asArray(history.traffic);
+        const queues = queue.queues || {};
+
+        const smwStatus = String((production.smw || {}).status || heartbeat.status || "unknown");
+        const diskUsed = server.disk_used_pct ?? (production.resources || {}).disk_used_pct;
+        const memoryUsed = server.memory_used_pct ?? (production.resources || {}).memory_used_pct;
+        const total5xx = O.n(apiTraffic.total_5xx);
+        const queueDepth = O.n(queue.total_depth);
+        const backupAge = O.n(backup.latest_backup_age_hours, -1);
+        const unhealthyServices = serviceRows.filter(s => O.statusClass(s.status) === "bad").length;
+        const nocScore = Math.min(100,
+          (O.statusClass(smwStatus) === "bad" ? 35 : 0) +
+          unhealthyServices * 10 +
+          (O.n(diskUsed) >= 90 ? 20 : O.n(diskUsed) >= 80 ? 8 : 0) +
+          (O.n(memoryUsed) >= 95 ? 20 : O.n(memoryUsed) >= 85 ? 8 : 0) +
+          (queueDepth > 100 ? 20 : queueDepth > 20 ? 8 : 0) +
+          (backupAge >= 48 ? 20 : backupAge >= 24 ? 8 : 0) +
+          total5xx * 5 +
+          incidentRows.length * 20
+        );
+        const nocTone = nocScore >= 70 ? "bad" : nocScore >= 30 ? "warn" : "good";
+
+        O.$("heartbeatMeta").textContent = `Heartbeat ${O.ago(heartbeat.received_at)} · Source ${heartbeat.source || "unknown"} · API ${O.API_BASE}`;
+        O.$("metrics").innerHTML = [
+          O.metric("NOC risk score", `${nocScore}/100`, "Availability risk from services, resources, queue, backups, 5xx, and incidents.", nocTone),
+          O.metric("SMW status", smwStatus.toUpperCase(), `heartbeat ${O.ago(heartbeat.received_at)}`, O.statusClass(smwStatus)),
+          O.metric("Disk used", diskUsed != null ? `${diskUsed}%` : "—", `host ${server.hostname || heartbeat.hostname || "smw"}`, pctTone(diskUsed, 80, 90)),
+          O.metric("Memory used", memoryUsed != null ? `${memoryUsed}%` : "—", `${server.cpu_count || "—"} CPU cores`, pctTone(memoryUsed, 85, 95)),
+          O.metric("Queue depth", queueDepth, "Celery/Redis total depth", queueTone(queueDepth)),
+          O.metric("Open incidents", incidentRows.length, incidentRows.length ? "needs response" : "clear", incidentRows.length ? "bad" : "good"),
+        ].join("");
+
+        O.spark("diskSpark", "Disk used", histServer.map(x => O.n(x.disk_used_pct)), pctTone(diskUsed, 80, 90), "%");
+        O.spark("memorySpark", "Memory used", histServer.map(x => O.n(x.memory_used_pct)), pctTone(memoryUsed, 85, 95), "%");
+        O.spark("loadSpark", "Load 1m", histServer.map(x => O.n(x.load1)), "good", "");
+        O.spark("requestSpark", "Requests/window", histTraffic.map(x => O.n(x.total_requests)), "good", "");
+        O.spark("fiveSpark", "5xx/window", histTraffic.map(x => O.n(x.total_5xx)), total5xx ? "bad" : "good", "");
+
+        O.$("uptimeList").innerHTML = uptimeRows.length ? uptimeRows.slice(0, 10).map(row => O.statusRow(row.target_key || row.target_url || "target", row.ok ? "ok" : "down", `${row.status_code || "—"} · ${row.latency_ms || "—"}ms · ${O.ago(row.checked_at)}`)).join("") : O.statusRow("No uptime rows", "unknown", "waiting for worker schedule");
+
+        const critical = serviceRows.filter(s => criticalNames.includes(s.service_name));
+        O.$("criticalServices").innerHTML = critical.length ? critical.map(s => O.statusRow(s.service_name, s.status, O.ago(s.checked_at))).join("") : O.statusRow("No critical service rows", "unknown", "waiting for heartbeat");
+        O.$("serviceList").innerHTML = serviceRows.length ? serviceRows.slice(0, 16).map(s => O.statusRow(s.service_name, s.status, O.ago(s.checked_at))).join("") : O.statusRow("No service snapshots", "unknown", "waiting for heartbeat");
+
+        O.$("databaseCards").innerHTML = [
+          O.metric("DB status", database.status || "unknown", "Postgres collector", O.statusClass(database.status)),
+          O.metric("Connections", database.connections ?? "—", `active ${database.active_connections ?? "—"} · idle ${database.idle_connections ?? "—"}`, O.n(database.connections) > 80 ? "warn" : "good"),
+          O.metric("DB size", O.fmtBytes(database.database_size_bytes), "current database", "good"),
+          O.metric("Lock waits", database.lock_waiting_queries ?? "—", `slow active ${database.slow_active_queries ?? "—"}`, O.n(database.lock_waiting_queries) ? "bad" : "good"),
+        ].join("");
+
+        O.$("queueCards").innerHTML = [
+          O.metric("Total queue depth", queueDepth, "Redis/Celery LLEN total", queueTone(queueDepth)),
+          O.metric("Worker service", queue.worker_service?.status || "unknown", queue.worker_service?.enabled || "systemd", O.statusClass(queue.worker_service?.status)),
+          O.metric("Beat service", queue.beat_service?.status || "unknown", queue.beat_service?.enabled || "systemd", O.statusClass(queue.beat_service?.status)),
+        ].join("");
+        O.bars("queueBars", Object.entries(queues).map(([name, q]) => ({ label: name, value: O.n(q.depth), tone: queueTone(q.depth) })));
+
+        O.$("deployCards").innerHTML = [
+          O.metric("Branch", deployment.current_branch || deployment.branch || "unknown", "current deployed branch", "good"),
+          O.metric("SHA", deployment.short_sha || latest.deploy?.short_sha || "—", deployment.is_dirty || latest.deploy?.is_dirty ? "working tree dirty" : "clean working tree", deployment.is_dirty || latest.deploy?.is_dirty ? "warn" : "good"),
+          O.metric("Last commit", deployment.last_commit_message || "—", "deployment metadata", "good"),
+          O.metric("Uptime", O.fmtUptime(server.uptime_seconds), `${heartbeat.hostname || server.hostname || "host"}`, "good"),
+        ].join("");
+
+        O.$("incidentList").innerHTML = incidentRows.length ? incidentRows.map(i => O.statusRow(i.title, i.severity, `${i.source || "unknown"} · ${O.ago(i.started_at)}`)).join("") : O.statusRow("No open incidents", "live", "clear");
+        O.$("backupCards").innerHTML = [
+          O.metric("Backup status", backup.status || "unknown", "latest detected backup", backupTone(backup.status, backup.latest_backup_age_hours)),
+          O.metric("Backup age", backup.latest_backup_age_hours != null ? `${backup.latest_backup_age_hours}h` : "—", backup.latest_backup_path || "no path", backupTone(backup.status, backup.latest_backup_age_hours)),
+          O.metric("Matched files", backup.matched_files ?? "—", "backup scan count", "good"),
+        ].join("");
+      } catch (err) {
+        O.$("error").textContent = `Unable to load NOC data: ${err && err.message ? err.message : err}`;
+        O.$("error").style.display = "block";
+      } finally {
+        O.$("refreshBtn").disabled = false;
+      }
+    }
+
+    O.$("refreshBtn").addEventListener("click", load);
+    load();
+    setInterval(load, 60000);
+  </script>
+</body>
+</html>
