@@ -35,9 +35,9 @@ const OpsPage = (() => {
   };
   const statusClass = (value) => {
     const s = String(value || "unknown").toLowerCase();
-    if (["healthy","ok","active","running","online","live","enabled"].includes(s)) return "good";
-    if (["degraded","warning","pending","stale","stale-warning","partial"].includes(s)) return "warn";
-    if (["critical","failed","down","inactive","error","missing","disabled"].includes(s)) return "bad";
+    if (["healthy","ok","active","running","online","live","enabled","complete","passed","covered","reviewed","approved"].includes(s)) return "good";
+    if (["degraded","warning","pending","stale","stale-warning","partial","needs-review","due-soon","in-progress"].includes(s)) return "warn";
+    if (["critical","failed","down","inactive","error","missing","disabled","overdue","gap","uncovered"].includes(s)) return "bad";
     const code = Number(s);
     if (Number.isFinite(code)) return code >= 500 ? "bad" : code >= 400 ? "warn" : "good";
     return "unknown";
@@ -72,6 +72,13 @@ const OpsPage = (() => {
     const points = nums.length ? nums.map((v, i) => `${(i / Math.max(1, nums.length - 1)) * 100},${44 - ((v - min) / span) * 34}`).join(" ") : "0,44 100,44";
     el.innerHTML = `<div class="spark-box"><div class="spark-head"><strong>${esc(label)}</strong><span>${raw.length ? `${latest}${suffix}` : "0"}</span></div><svg class="spark ${tone}" viewBox="0 0 100 52" preserveAspectRatio="none"><polyline points="${points}"></polyline></svg></div>`;
   };
+  const markActiveNav = () => {
+    const path = window.location.pathname.replace(/\/$/, "") || "/";
+    document.querySelectorAll(".nav a").forEach((link) => {
+      const href = link.getAttribute("href") || "";
+      if ((path === "/" && href === "/") || (href !== "/" && href.replace(/\/$/, "") === path)) link.classList.add("active");
+    });
+  };
   const getJson = async (path) => {
     const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -83,5 +90,5 @@ const OpsPage = (() => {
     ]);
     return { latest, services, history, incidents, errors };
   };
-  return { API_BASE, $, n, asArray, parseJson, esc, ago, fmtBytes, fmtUptime, statusClass, metric, statusRow, bars, spark, getJson, loadBundle };
+  return { API_BASE, $, n, asArray, parseJson, esc, ago, fmtBytes, fmtUptime, statusClass, metric, statusRow, bars, spark, markActiveNav, getJson, loadBundle };
 })();
