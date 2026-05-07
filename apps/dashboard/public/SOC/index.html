@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMW SOC Dashboard | Ops Engine</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08111f;
+      --panel: rgba(15, 23, 42, 0.86);
+      --panel-2: rgba(30, 41, 59, 0.72);
+      --text: #e5eefc;
+      --muted: #94a3b8;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --unknown: #64748b;
+      --line: rgba(148, 163, 184, 0.18);
+      --accent: #38bdf8;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 38rem),
+        radial-gradient(circle at top right, rgba(239, 68, 68, 0.12), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    main { width: min(1440px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 56px; }
+    a { color: inherit; }
+    .hero {
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.62));
+      box-shadow: var(--shadow);
+      padding: 28px;
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    .eyebrow { margin: 0 0 8px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.16em; font-size: 12px; font-weight: 800; }
+    h1 { margin: 0; font-size: clamp(34px, 4vw, 64px); line-height: 0.95; letter-spacing: -0.06em; }
+    h2 { margin: 0; font-size: 26px; letter-spacing: -0.03em; }
+    h3 { margin: 0; font-size: 18px; }
+    p { color: var(--muted); }
+    .subtitle { max-width: 900px; font-size: 16px; line-height: 1.7; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    button, .btn {
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, 0.92);
+      color: var(--text);
+      padding: 11px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    button:hover, .btn:hover { border-color: rgba(56, 189, 248, 0.5); }
+    button:disabled { cursor: wait; opacity: 0.65; }
+    .nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 0; }
+    .nav a { text-decoration: none; color: var(--muted); border: 1px solid var(--line); padding: 9px 12px; border-radius: 999px; background: rgba(15, 23, 42, 0.55); }
+    .nav a:hover { color: var(--text); border-color: rgba(56, 189, 248, 0.45); }
+    .section { margin-top: 24px; }
+    .section-head { display: flex; justify-content: space-between; gap: 18px; align-items: end; margin-bottom: 14px; }
+    .grid { display: grid; gap: 14px; }
+    .metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card, .metric {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--panel);
+      box-shadow: 0 18px 60px rgba(0,0,0,0.22);
+    }
+    .metric { padding: 18px; min-height: 138px; display: flex; flex-direction: column; justify-content: space-between; }
+    .metric p { margin: 0 0 10px; font-size: 13px; }
+    .metric strong { display: block; font-size: 30px; letter-spacing: -0.05em; }
+    .metric span { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .metric.good { border-color: rgba(34, 197, 94, 0.38); }
+    .metric.warn { border-color: rgba(245, 158, 11, 0.48); }
+    .metric.bad { border-color: rgba(239, 68, 68, 0.55); }
+    .card { padding: 18px; }
+    .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 16px; }
+    .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 800; border: 1px solid var(--line); color: var(--muted); }
+    .pill.good { color: var(--good); border-color: rgba(34, 197, 94, 0.35); background: rgba(34, 197, 94, 0.08); }
+    .pill.warn { color: var(--warn); border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.08); }
+    .pill.bad { color: var(--bad); border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08); }
+    .bars { display: grid; gap: 10px; }
+    .bar-row { display: grid; grid-template-columns: minmax(110px, 220px) 1fr 58px; gap: 10px; align-items: center; }
+    .bar-label { color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .bar-track { height: 10px; border-radius: 999px; background: rgba(148, 163, 184, 0.15); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+    .bar-fill.good { background: var(--good); }
+    .bar-fill.warn { background: var(--warn); }
+    .bar-fill.bad { background: var(--bad); }
+    .bar-value { color: var(--text); text-align: right; font-size: 12px; font-weight: 800; }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 16px; }
+    table { width: 100%; border-collapse: collapse; min-width: 980px; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    code { color: #bae6fd; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .status-list { display: grid; gap: 10px; }
+    .status-row { display: flex; gap: 10px; align-items: start; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: rgba(15, 23, 42, 0.46); }
+    .status-row strong { display: block; }
+    .status-row p { margin: 4px 0 0; font-size: 12px; }
+    .dot { width: 10px; height: 10px; border-radius: 999px; margin-top: 5px; background: var(--unknown); flex: 0 0 auto; }
+    .dot.good { background: var(--good); box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.12); }
+    .dot.warn { background: var(--warn); box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.12); }
+    .dot.bad { background: var(--bad); box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.12); }
+    .banner { border: 1px solid rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.1); color: #fecaca; padding: 14px 16px; border-radius: 18px; margin-top: 18px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    .risk-band { height: 14px; border-radius: 999px; background: linear-gradient(90deg, var(--good), var(--warn), var(--bad)); position: relative; overflow: hidden; margin-top: 14px; }
+    .risk-marker { position: absolute; top: -3px; width: 4px; height: 20px; border-radius: 999px; background: white; box-shadow: 0 0 20px rgba(255,255,255,.8); }
+    @media (max-width: 1100px) { .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } .two, .three { grid-template-columns: 1fr; } }
+    @media (max-width: 680px) { main { width: min(100% - 20px, 1440px); padding-top: 14px; } .hero { flex-direction: column; padding: 20px; border-radius: 22px; } .metrics { grid-template-columns: 1fr; } .section-head { display: block; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Security Operations Center</p>
+        <h1>SMW SOC Dashboard</h1>
+        <p class="subtitle">Security-focused monitoring for sunnysir.com using Ops Engine telemetry: sanitized request events, hashed actor signals, fail2ban/nginx summaries, API anomalies, incidents, uptime, and Sentry-lite error groups.</p>
+        <nav class="nav">
+          <a href="/">Mission Control</a>
+          <a href="/SOC">SOC</a>
+          <a href="#signals">Signals</a>
+          <a href="#requests">Suspicious Requests</a>
+          <a href="#incidents">Incidents</a>
+          <a href="#privacy">Privacy</a>
+        </nav>
+      </div>
+      <div class="actions">
+        <button id="refreshBtn">↻ Refresh</button>
+      </div>
+    </header>
+
+    <div id="error" class="banner" style="display:none"></div>
+
+    <section class="section" id="overview">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Threat posture</p>
+          <h2>SOC overview</h2>
+          <p id="heartbeatMeta" class="small muted">Loading heartbeat…</p>
+        </div>
+      </div>
+      <div class="grid metrics" id="metrics"></div>
+    </section>
+
+    <section class="section" id="signals">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Detection signals</p>
+          <h2>Traffic and actor signals</h2>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="card"><div class="card-head"><div><p class="eyebrow">HTTP status</p><h3>Status code distribution</h3></div></div><div class="bars" id="statusBars"></div></div>
+        <div class="card"><div class="card-head"><div><p class="eyebrow">Actor role</p><h3>Request roles</h3></div></div><div class="bars" id="roleBars"></div></div>
+      </div>
+      <div class="card" style="margin-top:14px"><div class="card-head"><div><p class="eyebrow">Endpoint pressure</p><h3>Most active endpoints</h3></div></div><div class="bars" id="endpointBars"></div></div>
+    </section>
+
+    <section class="section" id="requests">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Investigation queue</p>
+          <h2>Suspicious recent requests</h2>
+          <p class="small muted">Shows sampled requests with HTTP 4xx/5xx or duration ≥ 1000ms. Identifiers are hashed.</p>
+        </div>
+      </div>
+      <div class="card"><div class="table-wrap"><table><thead><tr><th>Time</th><th>Request ID</th><th>Method</th><th>Endpoint</th><th>Status</th><th>Duration</th><th>Role</th><th>User Hash</th><th>IP Hash</th></tr></thead><tbody id="requestRows"><tr><td colspan="9">Loading…</td></tr></tbody></table></div></div>
+    </section>
+
+    <section class="section" id="incidents">
+      <div class="section-head"><div><p class="eyebrow">Response</p><h2>Incidents and backend error groups</h2></div></div>
+      <div class="grid two">
+        <div class="card"><div class="card-head"><div><p class="eyebrow">Incidents</p><h3>Open incidents</h3></div></div><div class="status-list" id="incidentList"></div></div>
+        <div class="card"><div class="card-head"><div><p class="eyebrow">Sentry-lite</p><h3>Recent error groups</h3></div></div><div class="status-list" id="errorList"></div></div>
+      </div>
+    </section>
+
+    <section class="section" id="privacy">
+      <div class="section-head"><div><p class="eyebrow">Privacy boundary</p><h2>SOC data handling</h2></div></div>
+      <div class="grid three">
+        <div class="metric good"><p>Raw IPs</p><strong>Not collected</strong><span>SOC receives hashed IPs only.</span></div>
+        <div class="metric good"><p>Raw user IDs</p><strong>Not collected</strong><span>SOC receives hashed user identifiers only.</span></div>
+        <div class="metric good"><p>Request bodies</p><strong>Not collected</strong><span>No cookies, auth headers, bodies, or raw private student data.</span></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = window.OPS_ENGINE_API_BASE || localStorage.getItem("OPS_ENGINE_API_BASE") || "https://ops-engine-api.ishan4rs.workers.dev/api";
+    const $ = (id) => document.getElementById(id);
+    const n = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    const parseJson = (value, fallback) => { if (typeof value !== "string") return value || fallback; try { return JSON.parse(value); } catch { return fallback; } };
+    const asArray = (value) => Array.isArray(value) ? value : [];
+    const statusClass = (value) => {
+      const s = String(value || "unknown").toLowerCase();
+      if (["healthy","ok","active","running","online","live","enabled"].includes(s)) return "good";
+      if (["degraded","warning","pending","stale","partial"].includes(s)) return "warn";
+      if (["critical","failed","down","inactive","error","missing","disabled"].includes(s)) return "bad";
+      const code = Number(s);
+      if (Number.isFinite(code)) return code >= 500 ? "bad" : code >= 400 ? "warn" : "good";
+      return "unknown";
+    };
+    const ago = (iso) => {
+      if (!iso) return "never";
+      const diff = Date.now() - new Date(iso).getTime();
+      if (!Number.isFinite(diff)) return "unknown";
+      const sec = Math.max(0, Math.round(diff / 1000));
+      if (sec < 60) return `${sec}s ago`;
+      const min = Math.round(sec / 60);
+      if (min < 60) return `${min}m ago`;
+      const hr = Math.round(min / 60);
+      if (hr < 48) return `${hr}h ago`;
+      return `${Math.round(hr / 24)}d ago`;
+    };
+    const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"}[ch]));
+
+    function metric(title, value, detail, tone = "") {
+      return `<div class="metric ${tone}"><p>${esc(title)}</p><strong>${esc(value)}</strong><span>${esc(detail || "")}</span></div>`;
+    }
+    function bars(id, rows) {
+      const el = $(id);
+      const data = rows.length ? rows : [{ label: "none", value: 0 }];
+      const max = Math.max(...data.map(x => n(x.value)), 1);
+      el.innerHTML = data.map(row => {
+        const tone = row.tone || "";
+        const width = Math.max(2, n(row.value) / max * 100);
+        return `<div class="bar-row"><span class="bar-label" title="${esc(row.label)}">${esc(row.label)}</span><div class="bar-track"><div class="bar-fill ${tone}" style="width:${width}%"></div></div><span class="bar-value">${esc(row.value)}</span></div>`;
+      }).join("");
+    }
+    function statusRow(name, status, detail) {
+      return `<article class="status-row"><span class="dot ${statusClass(status)}"></span><div><strong>${esc(name)}</strong><p>${esc(status)}${detail ? " · " + esc(detail) : ""}</p></div></article>`;
+    }
+
+    async function getJson(path) {
+      const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    async function load() {
+      $("refreshBtn").disabled = true;
+      $("error").style.display = "none";
+      try {
+        const [latest, errors] = await Promise.all([getJson("/status/latest"), getJson("/errors")]);
+        const heartbeat = latest.heartbeat || {};
+        const cc = latest.control_center || {};
+        const security = cc.security || {};
+        const api = latest.api_traffic || {};
+        const requestSummary = latest.request_summary || {};
+        const requestEvents = asArray(latest.request_events);
+        const incidents = asArray(latest.incidents);
+        const errorGroups = asArray(errors.error_groups);
+        const statusCodes = parseJson(api.status_codes_json, {});
+        const roles = parseJson(requestSummary.roles_json, {});
+        const endpoints = parseJson(requestSummary.endpoints_json, []);
+
+        const total4xx = n(api.total_4xx);
+        const total5xx = n(api.total_5xx);
+        const fail2banBans = n(security.fail2ban_bans);
+        const nginxErrors = n(security.nginx_error_lines);
+        const riskScore = Math.min(100, total5xx * 10 + total4xx * 2 + fail2banBans * 15 + nginxErrors * 2 + incidents.length * 20 + errorGroups.length * 5);
+        const riskTone = riskScore >= 70 ? "bad" : riskScore >= 30 ? "warn" : "good";
+
+        $("heartbeatMeta").textContent = `Heartbeat ${ago(heartbeat.received_at)} · Source ${heartbeat.source || "unknown"} · API ${API_BASE}`;
+        $("metrics").innerHTML = [
+          metric("SOC risk score", `${riskScore}/100`, "Derived from 4xx/5xx, bans, nginx errors, incidents, and error groups.", riskTone),
+          metric("Fail2ban bans", fail2banBans, `${security.fail2ban_events || 0} fail2ban events`, fail2banBans > 0 ? "warn" : "good"),
+          metric("API 4xx", total4xx, "Client/auth/permission error pressure", total4xx > 50 ? "bad" : total4xx > 0 ? "warn" : "good"),
+          metric("API 5xx", total5xx, "Server-side failure pressure", total5xx > 0 ? "bad" : "good"),
+          metric("Nginx errors", nginxErrors, "Edge/server error lines", nginxErrors > 0 ? "warn" : "good"),
+          metric("Error groups", errorGroups.length, "Sentry-lite groups", errorGroups.length > 0 ? "bad" : "good"),
+        ].join("") + `<div class="card" style="grid-column:1/-1"><div class="card-head"><div><p class="eyebrow">Risk band</p><h3>Current SOC posture</h3></div><span class="pill ${riskTone}">${riskTone.toUpperCase()}</span></div><div class="risk-band"><span class="risk-marker" style="left:calc(${riskScore}% - 2px)"></span></div></div>`;
+
+        bars("statusBars", Object.entries(statusCodes).map(([label, value]) => ({ label, value: n(value), tone: n(label) >= 500 ? "bad" : n(label) >= 400 ? "warn" : "good" })));
+        bars("roleBars", Object.entries(roles).map(([label, value]) => ({ label, value: n(value), tone: label === "anonymous" ? "warn" : "good" })));
+        bars("endpointBars", asArray(endpoints).slice(0, 12).map(item => ({ label: String(item.endpoint || item.path || "unknown"), value: n(item.count), tone: "good" })));
+
+        const suspicious = requestEvents.filter(ev => n(ev.status) >= 400 || n(ev.duration_ms) >= 1000);
+        $("requestRows").innerHTML = suspicious.length ? suspicious.map(ev => `<tr><td>${esc(ago(ev.ts))}</td><td><code>${esc(ev.request_id || "—")}</code></td><td>${esc(ev.method || "")}</td><td><code>${esc(ev.endpoint || "")}</code></td><td><span class="pill ${statusClass(ev.status)}">${esc(ev.status)}</span></td><td>${esc(ev.duration_ms)}ms</td><td>${esc(ev.role || "")}</td><td><code>${esc(ev.hashed_user_id || "—")}</code></td><td><code>${esc(ev.hashed_ip || "—")}</code></td></tr>`).join("") : `<tr><td colspan="9">No suspicious requests in the latest sample.</td></tr>`;
+        $("incidentList").innerHTML = incidents.length ? incidents.map(i => statusRow(i.title, i.severity, `${i.source || "unknown"} · ${ago(i.started_at)}`)).join("") : statusRow("No open incidents", "live", "clear");
+        $("errorList").innerHTML = errorGroups.length ? errorGroups.slice(0, 10).map(group => {
+          const meta = parseJson(group.metadata_json, {});
+          const name = meta.exception_class || group.fingerprint || "Error group";
+          const detail = `${group.latest_path || meta.file || "unknown location"} · count ${group.count || 0} · ${ago(group.last_seen)}`;
+          return statusRow(name, group.latest_severity || "error", detail);
+        }).join("") : statusRow("No error groups", "live", "clear");
+      } catch (err) {
+        $("error").textContent = `Unable to load SOC data: ${err && err.message ? err.message : err}`;
+        $("error").style.display = "block";
+      } finally {
+        $("refreshBtn").disabled = false;
+      }
+    }
+
+    $("refreshBtn").addEventListener("click", load);
+    load();
+    setInterval(load, 60000);
+  </script>
+</body>
+</html>
