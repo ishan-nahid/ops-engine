@@ -92,6 +92,17 @@ The dashboard is section-based and includes top navigation:
 Overview | Trends | Traffic | Database | Queue | Security | UX | Business | Incidents
 ```
 
+Target dashboard separation:
+
+```text
+Overview = all traffic, including normal 2xx responses
+SOC      = suspicious patterns, findings, investigations, and response actions
+NOC      = infrastructure and service health
+GRC      = compliance and audit evidence
+Logs     = searchable sanitized events
+Settings = thresholds, allowlists, integrations, and response policy
+```
+
 Current live coverage:
 
 | Section | Data source |
@@ -101,11 +112,53 @@ Current live coverage:
 | API Traffic | Gunicorn journal access logs + sanitized request JSONL |
 | Database Monitoring | Postgres `pg_stat_*` collector |
 | Queue / Worker Monitoring | Redis `LLEN` + Celery systemd service status |
-| Security / DevSecOps | fail2ban/nginx summaries + grouped errors |
+| Security / DevSecOps | fail2ban/nginx summaries + grouped errors + request risk hints |
 | UX / RUM | JSONL RUM contract, ready for browser events |
 | Business Impact | SMW health-summary business counters |
 | Incidents | Worker D1 incidents + Telegram alert hooks |
 | Sentry-lite Errors | Django/Celery journal tracebacks parsed by agent |
+
+---
+
+## Request telemetry contract
+
+SMW writes sanitized backend API events to `REQUEST_EVENTS_JSONL_PATH`. Ops Engine agent preserves and forwards the following safe fields:
+
+```text
+ts
+request_id
+service
+source
+method
+endpoint
+route_group
+status
+status_family
+is_success
+is_client_error
+is_server_error
+duration_ms
+is_slow
+risk_hint
+role
+hashed_user_id
+hashed_ip
+user_agent_hash
+```
+
+The Worker stores the enriched fields inside `request_events.metadata_json` so no D1 migration is required for this compatibility update. Dashboard APIs return parsed `metadata` for latest and historical request events.
+
+Current lightweight `risk_hint` values from SMW:
+
+```text
+none
+scanner_probe
+admin_probe
+server_error
+slow_request
+```
+
+Important: these are event hints, not automatic blocking decisions. SOC should aggregate them into findings and response recommendations.
 
 ---
 
@@ -128,11 +181,14 @@ Allowed telemetry:
 - hashed user id
 - role
 - endpoint path with IDs normalized
+- route group
 - method
-- status code
+- status code and status family
 - duration
 - request id
 - timestamp
+- slow/success/error flags
+- risk hint
 - service/server/database/queue aggregates
 - sanitized traceback metadata from backend logs
 
@@ -153,7 +209,7 @@ Allowed telemetry:
 | `GET /api/history/server` | Server history |
 | `GET /api/history/traffic` | API traffic history |
 | `GET /api/history/uptime` | Uptime history |
-| `GET /api/history/requests` | Request event history |
+| `GET /api/history/requests` | Request event history with parsed metadata |
 | `POST /api/test-alert` | Telegram alert test; requires `AGENT_TOKEN` |
 
 ---
@@ -340,6 +396,8 @@ ERROR_LOG_SINCE="1 hour ago"
 SECURITY_LOG_SINCE="1 hour ago"
 
 REQUEST_EVENTS_JSONL_PATH=/var/www/html/SMW-v1/Backend/logs/ops_engine_api_events.jsonl
+REQUEST_EVENTS_MAX_SEND=250
+REQUEST_EVENTS_WINDOW_SECONDS=3600
 RUM_EVENTS_JSONL_PATH=/var/www/html/SMW-v1/Backend/logs/ops_engine_rum_events.jsonl
 ```
 
@@ -649,6 +707,9 @@ Planned next improvements:
 - incident acknowledgement workflow
 - dashboard authentication/protection
 - custom domain such as `ops.sunnysir.com`
+- SOC/NOC/GRC/Logs dashboard split with shared switcher
+- request risk-hint aggregation and SOC findings
+- private droplet-agent/Cloudflare response bridge
 - richer Telegram alert formatting
 - runbook links per incident type
 
