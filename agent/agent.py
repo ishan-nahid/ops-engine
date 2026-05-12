@@ -34,6 +34,27 @@ DJANGO_ERROR_RE = re.compile(r"(?P<level>ERROR|CRITICAL).*?(?P<klass>[A-Za-z_][A
 TRACE_FRAME_RE = re.compile(r'File "(?P<file>[^"]+)", line (?P<line>\d+), in (?P<function>[^\s]+)')
 EXCEPTION_RE = re.compile(r"(?P<class>[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Timeout|Violation))(?::\s*(?P<message>.*))?$")
 RID_RE = re.compile(r"(?:rid|request_id)[=:\s-]+(?P<rid>[A-Za-z0-9_-]{8,64})")
+REQUEST_EVENT_ALLOWED_FIELDS = [
+    "ts",
+    "request_id",
+    "service",
+    "source",
+    "method",
+    "endpoint",
+    "route_group",
+    "status",
+    "status_family",
+    "is_success",
+    "is_client_error",
+    "is_server_error",
+    "duration_ms",
+    "is_slow",
+    "risk_hint",
+    "role",
+    "hashed_user_id",
+    "hashed_ip",
+    "user_agent_hash",
+]
 
 
 def env(name: str, default: str = "") -> str:
@@ -133,7 +154,7 @@ def collect_smw_health() -> dict[str, Any]:
     url = env("SMW_HEALTH_SUMMARY_URL")
     if not url:
         return {"status": "unknown", "error": "SMW_HEALTH_SUMMARY_URL not configured"}
-    headers = {"user-agent": "ops-engine-agent/0.6.0"}
+    headers = {"user-agent": "ops-engine-agent/0.7.0"}
     token = env("SMW_HEALTH_SUMMARY_TOKEN")
     if token:
         headers["authorization"] = f"Bearer {token}"
@@ -462,7 +483,7 @@ def collect_request_events() -> list[dict[str, Any]]:
         request_id = str(item.get("request_id") or "")
         if request_id and request_id in seen_ids: continue
         if request_id: seen_ids.add(request_id)
-        events.append({k: item.get(k) for k in ["ts", "request_id", "method", "endpoint", "status", "duration_ms", "role", "hashed_user_id", "hashed_ip", "user_agent_hash"]})
+        events.append({k: item.get(k) for k in REQUEST_EVENT_ALLOWED_FIELDS})
         if len(events) >= max_events: break
     state[state_key] = new_offset; _save_state(state)
     return events
@@ -470,7 +491,7 @@ def collect_request_events() -> list[dict[str, Any]]:
 
 def build_payload() -> dict[str, Any]:
     smw_health = collect_smw_health(); git_info = collect_git(); services = collect_services(); services.update(collect_pm2())
-    return {"source": env("OPS_ENGINE_SOURCE", "smw-droplet"), "hostname": socket.gethostname(), "generated_at": now_iso(), "services": services, "resources": collect_resources(), "backups": collect_backups(), "smw": smw_health, "business": collect_business(smw_health), "database": collect_database(), "queue": collect_queue(), "deployment": collect_deployment(git_info), "user_experience": collect_user_experience(), "api_traffic": collect_api_traffic(), "request_events": collect_request_events(), "errors": collect_errors(), "security": collect_security(), "meta": {"git": git_info, "agent_version": "0.6.0"}}
+    return {"source": env("OPS_ENGINE_SOURCE", "smw-droplet"), "hostname": socket.gethostname(), "generated_at": now_iso(), "services": services, "resources": collect_resources(), "backups": collect_backups(), "smw": smw_health, "business": collect_business(smw_health), "database": collect_database(), "queue": collect_queue(), "deployment": collect_deployment(git_info), "user_experience": collect_user_experience(), "api_traffic": collect_api_traffic(), "request_events": collect_request_events(), "errors": collect_errors(), "security": collect_security(), "meta": {"git": git_info, "agent_version": "0.7.0"}}
 
 
 def push(payload: dict[str, Any]) -> None:
