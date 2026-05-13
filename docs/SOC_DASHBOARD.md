@@ -6,7 +6,32 @@ Ops Engine exposes a dedicated Security Operations Center dashboard at:
 https://ops-engine.pages.dev/SOC
 ```
 
-The SOC dashboard is intentionally separate from the main mission-control dashboard. The main dashboard remains focused on production, SRE, database, queue, UX, and business health. The SOC dashboard focuses on security triage and incident investigation.
+The SOC dashboard is intentionally separate from the main Mission Control dashboard. Mission Control remains focused on broad production, SRE, database, queue, UX, and business health. SOC focuses on security triage, suspicious traffic, risk hints, fail2ban/security signals, and incident investigation.
+
+## Current production navigation
+
+All operational dashboards should link to each other with a shared top-level dashboard switcher:
+
+```text
+Mission Control | SOC | NOC | GRC
+```
+
+Current routes:
+
+```text
+/      = Mission Control
+/SOC   = Security Operations Center
+/NOC   = Network Operations Center
+/GRC   = Governance, Risk, and Compliance readiness
+```
+
+The SOC page also exposes intra-page links:
+
+```text
+Signals | Suspicious Requests | Privacy
+```
+
+The 2026-05-13 deployed SOC screenshot confirms that the SOC page shows the global dashboard links and marks `SOC` as active.
 
 ## Route implementation
 
@@ -39,11 +64,101 @@ The dashboard consumes the same sanitized data already pushed by the SMW droplet
 - nginx error-line summaries
 - API 4xx and 5xx counts
 - status-code distributions
+- route-group distributions
 - request-role distributions
+- risk-hint distributions
 - top endpoint pressure
 - open incidents
 - Sentry-lite backend/Celery error groups
 - sampled request events with hashed identifiers only
+
+## Request risk hints
+
+SMW emits lightweight `risk_hint` values in sanitized request telemetry. Current values:
+
+```text
+none
+scanner_probe
+admin_probe
+server_error
+slow_request
+```
+
+SOC treats these as triage hints, not automatic blocking decisions.
+
+Current interpretation:
+
+| Risk hint | Meaning | Default action |
+|---|---|---|
+| `none` | No known suspicious pattern | No action |
+| `scanner_probe` | Common scanner path such as wp-admin, swagger, credentials, config, etc. | Observe unless repeated/heavy |
+| `admin_probe` | Admin or secret-admin probing pattern | Review; challenge/block only if repeated |
+| `server_error` | Backend/server-side failure signal | Investigate |
+| `slow_request` | Request exceeded slow threshold | Review for abuse/performance issue |
+
+## SOC scoring model
+
+The SOC score is risk-hint aware. It should avoid treating ordinary one-off internet scanner noise as a critical incident.
+
+Current scoring behavior:
+
+```text
+scanner_probe: +2 each, capped at +25
+admin_probe: +8 each, capped at +40
+server_error: +15 each
+slow_request: +5 each, capped at +25
+5xx: +15 each
+fail2ban bans: +20 each
+nginx error lines: +2 each, capped at +20
+open incidents: +25 each
+error groups: +8 each
+```
+
+Recommended action logic:
+
+```text
+Clear        = no meaningful suspicious signals
+Observe      = failed scanner-only activity
+Review       = mixed higher-risk signals, admin probe, slow abuse, or score >= 55
+Challenge    = repeated admin probing or fail2ban activity
+Investigate  = incidents, repeated server errors, or significant 5xx activity
+```
+
+## Fail2ban interpretation note
+
+The current agent exposes aggregate fail2ban event and ban counts. This may include SSH activity, nginx-sensitive-probe activity, nginx botsearch activity, or other jail activity depending on the logs seen inside the agent window.
+
+Important implication:
+
+```text
+Fail2ban bans are useful SOC context, but they do not always mean the web application is under active HTTP attack.
+```
+
+If the SOC score becomes elevated mainly because of fail2ban bans, verify which jail caused them on the droplet:
+
+```bash
+sudo fail2ban-client status
+sudo fail2ban-client status sshd
+sudo fail2ban-client status nginx-sensitive-probes
+sudo fail2ban-client status nginx-botsearch
+sudo fail2ban-client status nginx-http-auth
+sudo grep -Ei "nginx-sensitive-probes|nginx-botsearch|nginx-http-auth|sshd|Ban|Unban|Found|Ignore" /var/log/fail2ban.log | tail -n 120
+```
+
+Recommended future improvement:
+
+```text
+Expose per-jail fail2ban counters from the agent so SOC can weigh nginx/http bans higher and sshd bans lower.
+```
+
+Suggested future weighting:
+
+```text
+nginx-sensitive-probes ban: +20 each
+nginx-botsearch ban: +10 each
+nginx-http-auth ban: +10 each
+sshd ban: +3 each, capped at +15
+```
 
 ## Privacy boundary
 
@@ -64,8 +179,10 @@ Allowed SOC fields include:
 - hashed user ID
 - user role
 - normalized endpoint path
+- route group
+- risk hint
 - method
-- status code
+- status code and status family
 - request duration
 - request ID
 - incident metadata
@@ -112,10 +229,24 @@ Hard refresh the browser if needed:
 Ctrl + Shift + R
 ```
 
+Expected visible items:
+
+- global dashboard links: `Mission Control | SOC | NOC | GRC`
+- SOC active navigation state
+- SOC risk score
+- scanner/admin/server/fail2ban/error cards
+- risk-hint bars
+- status-code bars
+- route-group bars
+- suspicious request table with `Risk` column
+- incidents/error groups
+- privacy boundary cards
+
 ## Future improvements
 
 Recommended follow-up improvements:
 
+- split fail2ban counters by jail in the agent and Worker response
 - move SOC UI into React components after the main dashboard is split into reusable components
 - add `/api/security/summary` in the Worker if SOC-specific server-side aggregation becomes necessary
 - add incident acknowledgement and analyst notes
