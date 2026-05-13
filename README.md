@@ -12,7 +12,10 @@ Ops Engine intentionally lives outside the main SMW Django project. It gives SWE
 
 | Component | URL |
 |---|---|
-| Dashboard | `https://ops-engine.pages.dev` |
+| Mission Control dashboard | `https://ops-engine.pages.dev/` |
+| SOC dashboard | `https://ops-engine.pages.dev/SOC` |
+| NOC dashboard | `https://ops-engine.pages.dev/NOC` |
+| GRC dashboard | `https://ops-engine.pages.dev/GRC` |
 | Worker API | `https://ops-engine-api.ishan4rs.workers.dev/api` |
 | SMW public site | `https://sunnysir.com` |
 | SMW private health bridge | `https://sunnysir.com/api/internal/health-summary/` |
@@ -63,7 +66,7 @@ Cloudflare Worker
   └─ exposes dashboard API
 
 Cloudflare Pages dashboard
-  └─ reads Worker API and renders mission-control UI
+  └─ reads Worker API and renders Mission Control, SOC, NOC, and GRC pages
 ```
 
 Important: the droplet agent **pushes data out**. The SMW droplet should not expose a public monitoring port.
@@ -84,23 +87,39 @@ ops-engine/
 
 ---
 
-## Dashboard sections
+## Dashboard routes and navigation
 
-The dashboard is section-based and includes top navigation:
+Current dashboard routes:
 
 ```text
-Overview | Trends | Traffic | Database | Queue | Security | UX | Business | Incidents
+/      = Mission Control
+/SOC   = Security Operations Center
+/NOC   = Network Operations Center
+/GRC   = Governance, Risk, and Compliance readiness
 ```
 
-Target dashboard separation:
+All operational dashboard pages should expose the same top-level navigation:
 
 ```text
-Overview = all traffic, including normal 2xx responses
-SOC      = suspicious patterns, findings, investigations, and response actions
-NOC      = infrastructure and service health
-GRC      = compliance and audit evidence
-Logs     = searchable sanitized events
-Settings = thresholds, allowlists, integrations, and response policy
+Mission Control | SOC | NOC | GRC
+```
+
+Mission Control is implemented by the Vite/React shell. The separate `/SOC`, `/NOC`, and `/GRC` pages are static Cloudflare Pages folder-index routes under `apps/dashboard/public/`.
+
+Mission Control still contains section-level operational cards/tables for production health, trends, traffic, database, queue, security, UX, business, incidents, and errors. The dedicated pages split those concerns into clearer operational modes:
+
+```text
+Mission Control = broad executive/SRE overview
+SOC             = suspicious patterns, risk hints, findings, investigations, and response guidance
+NOC             = infrastructure, service health, uptime, queues, backups, and production availability
+GRC             = compliance readiness, audit evidence signals, backup/deploy/service controls
+```
+
+Future routes may include:
+
+```text
+/Logs      = searchable sanitized events
+/Settings  = thresholds, allowlists, integrations, and response policy
 ```
 
 Current live coverage:
@@ -159,6 +178,28 @@ slow_request
 ```
 
 Important: these are event hints, not automatic blocking decisions. SOC should aggregate them into findings and response recommendations.
+
+---
+
+## SOC scoring note
+
+The SOC dashboard uses a risk-hint-aware score. Scanner-only 404 noise should usually recommend `Observe`, not an automatic block.
+
+Current scoring weights:
+
+```text
+scanner_probe: +2 each, capped at +25
+admin_probe: +8 each, capped at +40
+server_error: +15 each
+slow_request: +5 each, capped at +25
+5xx: +15 each
+fail2ban bans: +20 each
+nginx error lines: +2 each, capped at +20
+open incidents: +25 each
+error groups: +8 each
+```
+
+Fail2ban counts are useful SOC context, but the current aggregate can include SSH and HTTP/nginx jails. A future improvement should expose per-jail fail2ban counters so SOC can weigh `nginx-sensitive-probes` differently from `sshd`.
 
 ---
 
@@ -326,6 +367,15 @@ Deploy from `main`. After deployment, hard refresh the browser:
 
 ```text
 Ctrl + Shift + R
+```
+
+Validate all dashboard routes:
+
+```text
+https://ops-engine.pages.dev/
+https://ops-engine.pages.dev/SOC
+https://ops-engine.pages.dev/NOC
+https://ops-engine.pages.dev/GRC
 ```
 
 ---
@@ -565,6 +615,17 @@ sudo systemctl start ops-engine-agent.service
 sudo journalctl -u ops-engine-agent -n 80 --no-pager
 ```
 
+### Inspect fail2ban jails on the droplet
+
+```bash
+sudo fail2ban-client status
+sudo fail2ban-client status sshd
+sudo fail2ban-client status nginx-sensitive-probes
+sudo fail2ban-client status nginx-botsearch
+sudo fail2ban-client status nginx-http-auth
+sudo grep -Ei "nginx-sensitive-probes|nginx-botsearch|nginx-http-auth|sshd|Ban|Unban|Found|Ignore" /var/log/fail2ban.log | tail -n 120
+```
+
 ### Clean fake/noisy error groups manually
 
 Only for known bad fingerprints:
@@ -707,7 +768,8 @@ Planned next improvements:
 - incident acknowledgement workflow
 - dashboard authentication/protection
 - custom domain such as `ops.sunnysir.com`
-- SOC/NOC/GRC/Logs dashboard split with shared switcher
+- Logs/Settings dashboard split with shared switcher
+- per-jail fail2ban counters and weighting
 - request risk-hint aggregation and SOC findings
 - private droplet-agent/Cloudflare response bridge
 - richer Telegram alert formatting
